@@ -84,7 +84,7 @@ export function LoginForm() {
         </div>
       </CardHeader>
       <CardContent>
-        <form onSubmit={handleLogin} className="space-y-6">
+        <form onSubmit={handleLogin} className="space-y-6" suppressHydrationWarning>
           <div className="space-y-2">
             <Label className="text-sm font-medium">Select Your Role</Label>
             <RoleSelector selectedRole={selectedRole} onRoleSelect={setSelectedRole} />
@@ -102,6 +102,7 @@ export function LoginForm() {
                 required
                 disabled={isLoading}
                 className="h-11"
+                suppressHydrationWarning
               />
             </div>
 
@@ -117,11 +118,13 @@ export function LoginForm() {
                   required
                   disabled={isLoading}
                   className="h-11 pr-10"
+                  suppressHydrationWarning
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  suppressHydrationWarning
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>

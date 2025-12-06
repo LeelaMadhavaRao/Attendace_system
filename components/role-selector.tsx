@@ -40,7 +40,7 @@ const roles: { id: UserRole; label: string; description: string; icon: React.Ele
 
 export function RoleSelector({ selectedRole, onRoleSelect }: RoleSelectorProps) {
   return (
-    <div className="grid grid-cols-2 gap-3">
+    <div className="grid grid-cols-2 gap-3" suppressHydrationWarning>
       {roles.map((role) => {
         const Icon = role.icon
         const isSelected = selectedRole === role.id
@@ -49,6 +49,7 @@ export function RoleSelector({ selectedRole, onRoleSelect }: RoleSelectorProps) 
             key={role.id}
             type="button"
             onClick={() => onRoleSelect(role.id)}
+            suppressHydrationWarning
             className={cn(
               "flex flex-col items-center gap-2 rounded-lg border-2 p-4 text-center transition-all duration-200",
               "hover:border-primary/50 hover:bg-accent",
