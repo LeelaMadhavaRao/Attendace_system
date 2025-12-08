@@ -14,6 +14,7 @@ WHERE rel.relname = 'profiles';
 -- Step 2: Drop the unique email constraint if it exists
 ALTER TABLE profiles DROP CONSTRAINT IF EXISTS profiles_email_key;
 ALTER TABLE profiles DROP CONSTRAINT IF EXISTS unique_email;
+ALTER TABLE profiles DROP CONSTRAINT IF EXISTS unique_profile_combination;
 
 -- Step 3: Create a new unique constraint on (name, email, phone) combination
 -- This allows same email for different people, but prevents exact duplicates

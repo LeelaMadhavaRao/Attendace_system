@@ -35,8 +35,24 @@ export async function createClass(input: CreateClassInput) {
     return { error: "Unauthorized" }
   }
 
-  // Get faculty record
-  const { data: faculty } = await supabase.from("faculty").select("id, department").eq("profile_id", user.id).single()
+  // Get faculty record - search by email since multiple profiles might exist
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("email", user.email || "")
+  
+  if (!profiles || profiles.length === 0) {
+    return { error: "Profile not found" }
+  }
+
+  const profileIds = profiles.map(p => p.id)
+
+  // Find faculty record
+  const { data: faculty } = await supabase
+    .from("faculty")
+    .select("id, department")
+    .in("profile_id", profileIds)
+    .single()
 
   if (!faculty) {
     return { error: "Faculty profile not found" }
@@ -141,7 +157,24 @@ export async function createSubject(input: CreateSubjectInput) {
     return { error: "Unauthorized" }
   }
 
-  const { data: faculty } = await supabase.from("faculty").select("id").eq("profile_id", user.id).single()
+  // Get faculty record - search by email since multiple profiles might exist
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("email", user.email || "")
+  
+  if (!profiles || profiles.length === 0) {
+    return { error: "Profile not found" }
+  }
+
+  const profileIds = profiles.map(p => p.id)
+
+  // Find faculty record
+  const { data: faculty } = await supabase
+    .from("faculty")
+    .select("id")
+    .in("profile_id", profileIds)
+    .single()
 
   if (!faculty) {
     return { error: "Faculty profile not found" }
@@ -222,7 +255,24 @@ export async function getFacultyClasses() {
     return { error: "Unauthorized", data: null }
   }
 
-  const { data: faculty } = await supabase.from("faculty").select("id").eq("profile_id", user.id).single()
+  // Get faculty record - search by email since multiple profiles might exist
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("email", user.email || "")
+  
+  if (!profiles || profiles.length === 0) {
+    return { error: "Profile not found", data: null }
+  }
+
+  const profileIds = profiles.map(p => p.id)
+
+  // Find faculty record
+  const { data: faculty } = await supabase
+    .from("faculty")
+    .select("id")
+    .in("profile_id", profileIds)
+    .single()
 
   if (!faculty) {
     return { error: "Faculty not found", data: null }

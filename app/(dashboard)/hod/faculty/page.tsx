@@ -17,33 +17,76 @@ export default async function HODFacultyPage() {
     redirect("/login")
   }
 
-  const { data: profile } = await supabase.from("profiles").select("role, department").eq("id", user.id).single()
+  console.log("[HOD/FACULTY] User:", user.email)
 
-  if (profile?.role !== "hod") {
+  // Find all profiles for this email
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("email", user.email || "")
+
+  if (!profiles || profiles.length === 0) {
+    console.log("[HOD/FACULTY] No profiles found, redirecting to login")
+    redirect("/login")
+  }
+
+  console.log("[HOD/FACULTY] Profiles:", profiles.map(p => ({ id: p.id, role: p.role })))
+
+  // Find HOD profile specifically
+  const hodProfile = profiles.find(p => p.role === "hod")
+
+  if (!hodProfile) {
+    console.log("[HOD/FACULTY] HOD profile not found, redirecting to dashboard")
     redirect("/dashboard")
   }
+
+  console.log("[HOD/FACULTY] Using HOD profile:", hodProfile.id)
 
   // Get HOD record
-  const { data: hod } = await supabase.from("hods").select("id, department").eq("profile_id", user.id).single()
+  const { data: hod } = await supabase
+    .from("hods")
+    .select("id, department")
+    .eq("profile_id", hodProfile.id)
+    .single()
 
   if (!hod) {
+    console.log("[HOD/FACULTY] HOD record not found, redirecting to dashboard")
     redirect("/dashboard")
   }
+
+  console.log("[HOD/FACULTY] HOD record found:", hod.id)
 
   const adminClient = createAdminClient()
 
   // Get faculty under this HOD
-  const { data: faculty } = await adminClient
+  const { data: faculty, error: facultyError } = await adminClient
     .from("faculty")
-    .select(
-      `
-      *,
-      profile:profiles(*),
-      hod:hods(*, profile:profiles(name))
-    `,
-    )
+    .select("*")
     .eq("hod_id", hod.id)
     .order("created_at", { ascending: false })
+
+  console.log("[HOD/FACULTY] Faculty query error:", facultyError)
+  console.log("[HOD/FACULTY] Faculty records found:", faculty?.length || 0)
+
+  // Fetch profiles for these faculty members
+  let facultyWithProfiles = []
+  if (faculty && faculty.length > 0) {
+    const profileIds = faculty.map((f: any) => f.profile_id)
+    const { data: profiles } = await supabase
+      .from("profiles")
+      .select("*")
+      .in("id", profileIds)
+
+    console.log("[HOD/FACULTY] Profiles fetched:", profiles?.length || 0)
+
+    // Combine faculty and profile data
+    facultyWithProfiles = faculty.map((f: any) => ({
+      ...f,
+      profile: profiles?.find((p: any) => p.id === f.profile_id),
+    }))
+  }
+
+  console.log("[HOD/FACULTY] Final faculty list with profiles:", facultyWithProfiles.length)
 
   return (
     <>
@@ -63,7 +106,7 @@ export default async function HODFacultyPage() {
             <CreateFacultyDialog isHOD={true} />
           </CardHeader>
           <CardContent>
-            <UsersTable users={(faculty as never[]) || []} type="faculty" />
+            <UsersTable users={(facultyWithProfiles as never[]) || []} type="faculty" />
           </CardContent>
         </Card>
       </div>

@@ -24,9 +24,24 @@ export default async function HODClassDetailPage({ params }: PageProps) {
     redirect("/login")
   }
 
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single()
+  console.log("[HOD/CLASSES/[ID]] User:", user.email)
 
-  if (profile?.role !== "hod") {
+  // Find all profiles for this email
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("email", user.email || "")
+
+  if (!profiles || profiles.length === 0) {
+    console.log("[HOD/CLASSES/[ID]] No profiles found, redirecting to login")
+    redirect("/login")
+  }
+
+  // Find HOD profile specifically
+  const hodProfile = profiles.find(p => p.role === "hod")
+
+  if (!hodProfile) {
+    console.log("[HOD/CLASSES/[ID]] HOD profile not found, redirecting to dashboard")
     redirect("/dashboard")
   }
 

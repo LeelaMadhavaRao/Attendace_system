@@ -80,9 +80,24 @@ export default async function FacultyCommandsPage() {
     redirect("/login")
   }
 
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single()
+  console.log("[FACULTY/COMMANDS] User:", user.email)
 
-  if (profile?.role !== "faculty") {
+  // Find all profiles for this email
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("email", user.email || "")
+
+  if (!profiles || profiles.length === 0) {
+    console.log("[FACULTY/COMMANDS] No profiles found, redirecting to login")
+    redirect("/login")
+  }
+
+  // Find faculty profile specifically
+  const facultyProfile = profiles.find(p => p.role === "faculty")
+
+  if (!facultyProfile) {
+    console.log("[FACULTY/COMMANDS] Faculty profile not found, redirecting to dashboard")
     redirect("/dashboard")
   }
 

@@ -17,17 +17,34 @@ export default async function FacultyDashboard() {
     redirect("/login")
   }
 
-  const { data: profile } = await supabase.from("profiles").select("role, name").eq("id", user.id).single()
+  console.log("[FACULTY] User:", user.email)
 
-  if (profile?.role !== "faculty") {
+  // Find all profiles for this email
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("email", user.email || "")
+
+  if (!profiles || profiles.length === 0) {
+    console.log("[FACULTY] No profiles found, redirecting to login")
+    redirect("/login")
+  }
+
+  // Find faculty profile specifically
+  const facultyProfile = profiles.find(p => p.role === "faculty")
+
+  if (!facultyProfile) {
+    console.log("[FACULTY] Faculty profile not found, redirecting to dashboard")
     redirect("/dashboard")
   }
+
+  console.log("[FACULTY] Using faculty profile:", facultyProfile.id)
 
   // Get faculty record
   const { data: faculty } = await supabase
     .from("faculty")
     .select("id, whatsapp_number")
-    .eq("profile_id", user.id)
+    .eq("profile_id", facultyProfile.id)
     .single()
 
   // Fetch stats

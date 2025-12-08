@@ -14,9 +14,24 @@ export default async function StudentDashboard() {
     redirect("/login")
   }
 
-  const { data: profile } = await supabase.from("profiles").select("role, name").eq("id", user.id).single()
+  console.log("[STUDENT] User:", user.email)
 
-  if (profile?.role !== "student") {
+  // Find all profiles for this email
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("email", user.email || "")
+
+  if (!profiles || profiles.length === 0) {
+    console.log("[STUDENT] No profiles found, redirecting to login")
+    redirect("/login")
+  }
+
+  // Find student profile specifically
+  const studentProfile = profiles.find(p => p.role === "student")
+
+  if (!studentProfile) {
+    console.log("[STUDENT] Student profile not found, redirecting to dashboard")
     redirect("/dashboard")
   }
 
@@ -26,7 +41,7 @@ export default async function StudentDashboard() {
       <div className="p-6 space-y-6">
         <Card>
           <CardHeader>
-            <CardTitle>Welcome, {profile.name}</CardTitle>
+            <CardTitle>Welcome, {studentProfile.name}</CardTitle>
             <CardDescription>View your attendance summary</CardDescription>
           </CardHeader>
           <CardContent>

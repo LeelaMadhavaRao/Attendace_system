@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
 
     // Forward to edge function
-    const edgeFunctionUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/whatsapp-webhook`
+    const edgeFunctionUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/whatsapp-webhook1`
     
     const response = await fetch(edgeFunctionUrl, {
       method: "POST",

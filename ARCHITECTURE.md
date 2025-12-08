@@ -20,7 +20,7 @@ The system now uses **Supabase Edge Functions** for backend processing, providin
          ▼
 ┌──────────────────────────────────────────┐
 │  Supabase Edge Function (Deno Runtime)   │
-│  /functions/whatsapp-webhook/index.ts    │
+│  /functions/whatsapp-webhook1/index.ts    │
 │                                          │
 │  ┌──────────────────────────────┐       │
 │  │  Message Processing          │       │
@@ -65,7 +65,7 @@ my-app/
 │
 ├── supabase/
 │   ├── functions/
-│   │   ├── whatsapp-webhook/         # Main webhook handler
+│   │   ├── whatsapp-webhook1/         # Main webhook handler
 │   │   │   └── index.ts
 │   │   ├── route-handlers/           # Business logic handlers
 │   │   │   └── index.ts
@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
 ### 3. **Edge Function Processing**
 
 ```typescript
-// supabase/functions/whatsapp-webhook/index.ts
+// supabase/functions/whatsapp-webhook1/index.ts
 Deno.serve(async (req) => {
   // 1. Authenticate faculty by WhatsApp number
   // 2. Download & parse media (Excel files)
@@ -176,7 +176,7 @@ cd supabase/functions
 
 **Webhook URL:**
 ```
-https://YOUR_PROJECT.supabase.co/functions/v1/whatsapp-webhook
+https://YOUR_PROJECT.supabase.co/functions/v1/whatsapp-webhook1
 ```
 
 ### Option 2: Next.js API + Edge Functions (Current)
@@ -244,17 +244,17 @@ supabase secrets set GEMINI_API_KEY=xxx
 ### View Edge Function Logs
 
 ```bash
-supabase functions logs whatsapp-webhook
+supabase functions logs whatsapp-webhook1
 ```
 
 ### Local Testing
 
 ```bash
 # Start local Edge Functions
-supabase functions serve whatsapp-webhook --env-file ../../.env.local
+supabase functions serve whatsapp-webhook1 --env-file ../../.env.local
 
 # Test with curl
-curl -X POST http://localhost:54321/functions/v1/whatsapp-webhook \
+curl -X POST http://localhost:54321/functions/v1/whatsapp-webhook1 \
   -H "Content-Type: application/json" \
   -d '{...webhook_payload...}'
 ```
@@ -263,7 +263,7 @@ curl -X POST http://localhost:54321/functions/v1/whatsapp-webhook \
 
 1. Go to Supabase Dashboard
 2. Navigate to Edge Functions
-3. Select `whatsapp-webhook`
+3. Select `whatsapp-webhook1`
 4. View Logs, Invocations, and Performance metrics
 
 ## 🛠️ Development Workflow
@@ -272,9 +272,9 @@ curl -X POST http://localhost:54321/functions/v1/whatsapp-webhook \
 
 1. **Add route to Gemini prompt** (`_shared/utils.ts`)
 2. **Create handler** (`route-handlers/index.ts`)
-3. **Add to switch statement** (`whatsapp-webhook/index.ts`)
+3. **Add to switch statement** (`whatsapp-webhook1/index.ts`)
 4. **Test locally**
-5. **Deploy**: `supabase functions deploy whatsapp-webhook`
+5. **Deploy**: `supabase functions deploy whatsapp-webhook1`
 
 ### Example: Adding "Delete Student" Route
 
@@ -284,7 +284,7 @@ export async function handleDeleteStudent(ctx: RouteHandlerContext) {
   // Implementation
 }
 
-// 2. In whatsapp-webhook/index.ts
+// 2. In whatsapp-webhook1/index.ts
 case "deleteStudent":
   responseMessage = await handleDeleteStudent(routeContext)
   break

@@ -18,16 +18,38 @@ export default async function HODClassesPage() {
     redirect("/login")
   }
 
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single()
+  console.log("[HOD/CLASSES] User:", user.email)
 
-  if (profile?.role !== "hod") {
+  // Find all profiles for this email
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("email", user.email || "")
+
+  if (!profiles || profiles.length === 0) {
+    console.log("[HOD/CLASSES] No profiles found, redirecting to login")
+    redirect("/login")
+  }
+
+  // Find HOD profile specifically
+  const hodProfile = profiles.find(p => p.role === "hod")
+
+  if (!hodProfile) {
+    console.log("[HOD/CLASSES] HOD profile not found, redirecting to dashboard")
     redirect("/dashboard")
   }
 
+  console.log("[HOD/CLASSES] Using HOD profile:", hodProfile.id)
+
   // Get HOD record
-  const { data: hod } = await supabase.from("hods").select("id, department").eq("profile_id", user.id).single()
+  const { data: hod } = await supabase
+    .from("hods")
+    .select("id, department")
+    .eq("profile_id", hodProfile.id)
+    .single()
 
   if (!hod) {
+    console.log("[HOD/CLASSES] HOD record not found, redirecting to dashboard")
     redirect("/dashboard")
   }
 

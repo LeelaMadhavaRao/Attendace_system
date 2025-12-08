@@ -17,9 +17,24 @@ export default async function AdminSettingsPage() {
     redirect("/login")
   }
 
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single()
+  console.log("[ADMIN/SETTINGS] User:", user.email)
 
-  if (profile?.role !== "admin") {
+  // Find all profiles for this email
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("email", user.email || "")
+
+  if (!profiles || profiles.length === 0) {
+    console.log("[ADMIN/SETTINGS] No profiles found, redirecting to login")
+    redirect("/login")
+  }
+
+  // Find admin profile specifically
+  const adminProfile = profiles.find(p => p.role === "admin")
+
+  if (!adminProfile) {
+    console.log("[ADMIN/SETTINGS] Admin profile not found, redirecting to dashboard")
     redirect("/dashboard")
   }
 

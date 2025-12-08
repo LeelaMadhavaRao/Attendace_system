@@ -26,13 +26,28 @@ export default async function FacultyClassDetailPage({ params }: PageProps) {
     redirect("/login")
   }
 
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single()
+  console.log("[FACULTY/CLASSES/[ID]] User:", user.email)
 
-  if (profile?.role !== "faculty") {
+  // Find all profiles for this email
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("email", user.email || "")
+
+  if (!profiles || profiles.length === 0) {
+    console.log("[FACULTY/CLASSES/[ID]] No profiles found, redirecting to login")
+    redirect("/login")
+  }
+
+  // Find faculty profile specifically
+  const facultyProfile = profiles.find(p => p.role === "faculty")
+
+  if (!facultyProfile) {
+    console.log("[FACULTY/CLASSES/[ID]] Faculty profile not found, redirecting to dashboard")
     redirect("/dashboard")
   }
 
-  const { data: faculty } = await supabase.from("faculty").select("id").eq("profile_id", user.id).single()
+  const { data: faculty } = await supabase.from("faculty").select("id").eq("profile_id", facultyProfile.id).single()
 
   if (!faculty) {
     redirect("/dashboard")

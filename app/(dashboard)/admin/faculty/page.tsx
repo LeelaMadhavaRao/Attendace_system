@@ -7,7 +7,7 @@ import { UsersTable } from "@/components/users-table"
 import { getFaculty } from "@/lib/admin"
 import { GraduationCap } from "lucide-react"
 
-export default async function FacultyPage() {
+export default async function AdminFacultyPage() {
   const supabase = await createClient()
   const {
     data: { user },
@@ -17,9 +17,24 @@ export default async function FacultyPage() {
     redirect("/login")
   }
 
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single()
+  console.log("[ADMIN/FACULTY] User:", user.email)
 
-  if (profile?.role !== "admin") {
+  // Find all profiles for this email
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("email", user.email || "")
+
+  if (!profiles || profiles.length === 0) {
+    console.log("[ADMIN/FACULTY] No profiles found, redirecting to login")
+    redirect("/login")
+  }
+
+  // Find admin profile specifically
+  const adminProfile = profiles.find(p => p.role === "admin")
+
+  if (!adminProfile) {
+    console.log("[ADMIN/FACULTY] Admin profile not found, redirecting to dashboard")
     redirect("/dashboard")
   }
 

@@ -42,27 +42,101 @@ export function LoginForm() {
       }
 
       if (data.user) {
-        // Fetch user profile to verify role
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
-          .select("role")
-          .eq("id", data.user.id)
-          .single()
+        // Get the original email (either from metadata if variant, or use the auth email directly)
+        const originalEmail = data.user.user_metadata?.original_email || data.user.email || ""
+        
+        console.log("[LOGIN] Auth user email:", data.user.email)
+        console.log("[LOGIN] Original email:", originalEmail)
 
-        if (profileError || !profile) {
+        // Find ALL profiles with this email (there might be multiple for different roles)
+        const { data: profiles, error: profileError } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("email", originalEmail)
+
+        console.log("[LOGIN] User email:", data.user.email)
+        console.log("[LOGIN] Profiles found:", profiles?.map(p => ({ id: p.id, role: p.role })))
+
+        if (profileError || !profiles || profiles.length === 0) {
           toast.error("Could not verify your role. Please contact administrator.")
           await supabase.auth.signOut()
           return
         }
 
-        if (profile.role !== selectedRole) {
-          toast.error(`Your account is registered as ${profile.role}. Please select the correct role.`)
+        // Check which roles are available for this email
+        const availableRoles: UserRole[] = []
+        const profileIds = profiles.map(p => p.id)
+        console.log("[LOGIN] Profile IDs:", profileIds)
+
+        // Check each profile for this email to see what roles exist
+        for (const profile of profiles) {
+          if (profile.role === "admin") {
+            availableRoles.push("admin")
+          }
+        }
+
+        // Check if user is in faculty table using profile IDs
+        const { data: facultyRecord } = await supabase
+          .from("faculty")
+          .select("id")
+          .in("profile_id", profileIds)
+          .single()
+
+        if (facultyRecord) {
+          availableRoles.push("faculty")
+          console.log("[LOGIN] Faculty role found")
+        }
+
+        // Check if user is in hod table using profile IDs
+        const { data: hodRecord } = await supabase
+          .from("hods")
+          .select("id")
+          .in("profile_id", profileIds)
+          .single()
+
+        if (hodRecord) {
+          availableRoles.push("hod")
+          console.log("[LOGIN] HOD role found")
+        }
+
+        // Remove duplicates
+        const uniqueRoles = [...new Set(availableRoles)]
+        console.log("[LOGIN] Available roles:", uniqueRoles)
+
+        // Check if selected role is available
+        if (!uniqueRoles.includes(selectedRole)) {
+          const availableRolesList = uniqueRoles.join(", ")
+          toast.error(`Your account has roles: ${availableRolesList}. Please select one of these roles.`)
           await supabase.auth.signOut()
           return
         }
 
+        // Store the selected role and email for this login session
+        localStorage.setItem("userRole", selectedRole)
+        localStorage.setItem("userEmail", originalEmail)
+        console.log("[LOGIN] Selected role:", selectedRole)
+
         toast.success("Login successful!")
-        router.push("/dashboard")
+        
+        // Redirect directly to the selected role dashboard
+        console.log("[LOGIN] Redirecting to role dashboard")
+        if (selectedRole === "admin") {
+          console.log("[LOGIN] Redirecting to /admin")
+          router.push("/admin")
+        } else if (selectedRole === "hod") {
+          console.log("[LOGIN] Redirecting to /hod")
+          router.push("/hod")
+        } else if (selectedRole === "faculty") {
+          console.log("[LOGIN] Redirecting to /faculty")
+          router.push("/faculty")
+        } else if (selectedRole === "student") {
+          console.log("[LOGIN] Redirecting to /student")
+          router.push("/student")
+        } else {
+          console.log("[LOGIN] Redirecting to /dashboard (default)")
+          router.push("/dashboard")
+        }
+        
         router.refresh()
       }
     } catch {

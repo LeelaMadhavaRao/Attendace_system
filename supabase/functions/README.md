@@ -41,7 +41,7 @@ supabase login
 supabase link --project-ref your-project-ref
 
 # Deploy the function
-supabase functions deploy whatsapp-webhook
+supabase functions deploy whatsapp-webhook1
 
 # Set environment variables
 supabase secrets set WHATSAPP_ACCESS_TOKEN=your_token
@@ -54,7 +54,7 @@ supabase secrets set GEMINI_API_KEY=your_key
 
 After deployment, your webhook URL will be:
 ```
-https://your-project-ref.supabase.co/functions/v1/whatsapp-webhook
+https://your-project-ref.supabase.co/functions/v1/whatsapp-webhook1
 ```
 
 Configure this URL in your Meta Developer Console for WhatsApp Business API.
@@ -63,10 +63,10 @@ Configure this URL in your Meta Developer Console for WhatsApp Business API.
 
 ```bash
 # Start local development server
-supabase functions serve whatsapp-webhook --env-file .env.local
+supabase functions serve whatsapp-webhook1 --env-file .env.local
 
 # Test the function
-curl -X POST http://localhost:54321/functions/v1/whatsapp-webhook \
+curl -X POST http://localhost:54321/functions/v1/whatsapp-webhook1 \
   -H "Content-Type: application/json" \
   -d '{"entry": [{"changes": [{"value": {"messages": [{"from": "1234567890", "text": {"body": "hello"}}]}}]}]}'
 ```
@@ -77,5 +77,5 @@ Use the Meta Developer Console's "Test" feature to send test messages, or use cu
 
 ```bash
 # Verify webhook
-curl "https://your-project.supabase.co/functions/v1/whatsapp-webhook?hub.mode=subscribe&hub.verify_token=your_token&hub.challenge=test_challenge"
+curl "https://your-project.supabase.co/functions/v1/whatsapp-webhook1?hub.mode=subscribe&hub.verify_token=your_token&hub.challenge=test_challenge"
 ```

@@ -24,27 +24,45 @@ export async function sendWhatsAppMessage(
   accessToken: string,
   phoneNumberId: string,
 ) {
+  console.log("=== SENDING WHATSAPP MESSAGE ===")
+  console.log("To:", to)
+  console.log("Message:", message)
+  console.log("Phone Number ID:", phoneNumberId)
+  console.log("Access Token exists:", !!accessToken)
+  
   try {
-    const response = await fetch(`https://graph.facebook.com/v17.0/${phoneNumberId}/messages`, {
+    // Use v22.0 API (v17.0 is deprecated)
+    const url = `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`
+    console.log("API URL:", url)
+    
+    const body = {
+      messaging_product: "whatsapp",
+      to: to,
+      type: "text",
+      text: { body: message },
+    }
+    console.log("Request body:", JSON.stringify(body))
+    
+    const response = await fetch(url, {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to: to,
-        type: "text",
-        text: { body: message },
-      }),
+      body: JSON.stringify(body),
     })
 
+    console.log("Response status:", response.status)
+    const responseText = await response.text()
+    console.log("Response body:", responseText)
+
     if (!response.ok) {
-      const error = await response.json()
+      const error = JSON.parse(responseText)
+      console.error("WhatsApp API error:", error)
       throw new Error(`WhatsApp API error: ${JSON.stringify(error)}`)
     }
 
-    return await response.json()
+    return JSON.parse(responseText)
   } catch (error) {
     console.error("Error sending WhatsApp message:", error)
     throw error
@@ -199,8 +217,13 @@ Remember: ALWAYS return valid JSON. ALWAYS include route, message, and data fiel
       },
     ]
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${geminiApiKey}`,
+    console.log("=== CALLING GEMINI API ===")
+    console.log("Gemini API key exists:", !!geminiApiKey)
+    console.log("Message to process:", contextMessage)
+    
+    // Try primary model first: gemini-2.5-flash
+    let response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -216,8 +239,36 @@ Remember: ALWAYS return valid JSON. ALWAYS include route, message, and data fiel
       },
     )
 
+    console.log("Gemini 2.5-flash response status:", response.status)
+    
+    // If primary model fails with 429 or 404, fallback to gemini-2.0-flash
+    if (!response.ok && (response.status === 429 || response.status === 404)) {
+      console.log("Primary model failed, trying fallback: gemini-2.0-flash")
+      
+      response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: messages,
+            generationConfig: {
+              temperature: 0.1,
+              topK: 1,
+              topP: 1,
+              maxOutputTokens: 2048,
+            },
+          }),
+        },
+      )
+      
+      console.log("Gemini 2.0-flash fallback response status:", response.status)
+    }
+    
     if (!response.ok) {
-      throw new Error("Gemini API error")
+      const errorText = await response.text()
+      console.error("Gemini API error response:", errorText)
+      throw new Error(`Gemini API error: ${response.status} - ${errorText}`)
     }
 
     const data = await response.json()

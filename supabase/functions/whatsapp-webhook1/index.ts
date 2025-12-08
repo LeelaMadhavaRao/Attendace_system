@@ -25,13 +25,22 @@ interface WebhookEntry {
 }
 
 Deno.serve(async (req) => {
+  console.log("=== WEBHOOK REQUEST RECEIVED ===")
+  console.log("Method:", req.method)
+  console.log("URL:", req.url)
+  
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, accept",
+    "Access-Control-Max-Age": "86400",
+    "Content-Type": "application/json",
+    "Server": "Supabase Edge Function",
   }
 
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
+    console.log("OPTIONS request - returning ok")
     return new Response("ok", { headers: corsHeaders })
   }
 
@@ -40,31 +49,48 @@ Deno.serve(async (req) => {
     
     // Handle webhook verification (GET request)
     if (req.method === "GET") {
+      console.log("GET request for webhook verification")
       const mode = url.searchParams.get("hub.mode")
       const token = url.searchParams.get("hub.verify_token")
       const challenge = url.searchParams.get("hub.challenge")
+      
+      console.log("Verification params - mode:", mode, "token:", token, "challenge:", challenge)
 
       const verifyToken = Deno.env.get("WHATSAPP_WEBHOOK_VERIFY_TOKEN") || "attendance_webhook_token"
+      console.log("Expected verify token:", verifyToken)
 
       if (mode === "subscribe" && token === verifyToken) {
-        console.log("Webhook verified")
+        console.log("Webhook verified successfully!")
         return new Response(challenge, { status: 200, headers: corsHeaders })
       }
 
+      console.log("Webhook verification failed - token mismatch")
       return new Response("Forbidden", { status: 403, headers: corsHeaders })
     }
 
     // Handle webhook POST (incoming messages)
     if (req.method === "POST") {
-      const body = await req.json()
+      console.log("POST request - processing incoming message")
+      
+      const bodyText = await req.text()
+      console.log("Raw body:", bodyText)
+      
+      const body = JSON.parse(bodyText)
+      console.log("Parsed body:", JSON.stringify(body, null, 2))
       
       // Extract message data
       const entry = body.entry?.[0] as WebhookEntry
       const changes = entry?.changes?.[0]
       const message = changes?.value?.messages?.[0]
+      
+      console.log("Entry:", entry ? "found" : "not found")
+      console.log("Changes:", changes ? "found" : "not found")
+      console.log("Message:", message ? JSON.stringify(message) : "not found")
 
       if (!message) {
+        console.log("No message found in webhook payload - returning 'no message'")
         return new Response(JSON.stringify({ status: "no message" }), {
+          status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         })
       }
@@ -72,31 +98,51 @@ Deno.serve(async (req) => {
       const phoneNumber = message.from
       const messageText = message.text?.body || ""
       const messageId = message.id
+      
+      console.log("Phone number:", phoneNumber)
+      console.log("Message text:", messageText)
+      console.log("Message ID:", messageId)
 
       // Initialize Supabase client
       const supabaseUrl = Deno.env.get("SUPABASE_URL")!
       const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+      console.log("Supabase URL:", supabaseUrl)
+      console.log("Supabase key exists:", !!supabaseKey)
+      
       const supabase = createSupabaseClient({ supabaseUrl, supabaseKey })
 
       // Get faculty by WhatsApp number
-      const { data: faculty } = await supabase
+      console.log("Looking up faculty with WhatsApp number:", phoneNumber)
+      const { data: faculty, error: facultyError } = await supabase
         .from("faculty")
         .select("id, profile_id, whatsapp_number")
         .or(`whatsapp_number.eq.${phoneNumber},whatsapp_number.eq.+${phoneNumber}`)
         .single()
+      
+      console.log("Faculty lookup result:", faculty ? JSON.stringify(faculty) : "null")
+      console.log("Faculty lookup error:", facultyError ? JSON.stringify(facultyError) : "null")
 
       if (!faculty) {
+        console.log("Faculty not found - sending not authorized message")
         const accessToken = Deno.env.get("WHATSAPP_ACCESS_TOKEN")!
         const phoneNumberId = Deno.env.get("WHATSAPP_PHONE_NUMBER_ID")!
         
-        await sendWhatsAppMessage(
-          {
-            to: phoneNumber,
-            message: "You are not registered as a faculty member. Please contact the administrator.",
-          },
-          accessToken,
-          phoneNumberId,
-        )
+        console.log("Access token exists:", !!accessToken)
+        console.log("Phone number ID:", phoneNumberId)
+        
+        try {
+          const sendResult = await sendWhatsAppMessage(
+            {
+              to: phoneNumber,
+              message: "You are not registered as a faculty member. Please contact the administrator.",
+            },
+            accessToken,
+            phoneNumberId,
+          )
+          console.log("Send message result:", JSON.stringify(sendResult))
+        } catch (sendError) {
+          console.error("Error sending not authorized message:", sendError)
+        }
 
         return new Response(JSON.stringify({ status: "not authorized" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -151,13 +197,28 @@ Deno.serve(async (req) => {
 
       // Process with Gemini
       const geminiApiKey = Deno.env.get("GEMINI_API_KEY")!
-      const geminiResponse = await processWithGemini(
-        messageText,
-        chatHistory,
-        geminiApiKey,
-        mediaType || undefined,
-        extractedData,
-      )
+      console.log("Gemini API key exists:", !!geminiApiKey)
+      console.log("Gemini API key first 10 chars:", geminiApiKey ? geminiApiKey.substring(0, 10) : "missing")
+      
+      let geminiResponse
+      try {
+        geminiResponse = await processWithGemini(
+          messageText,
+          chatHistory,
+          geminiApiKey,
+          mediaType || undefined,
+          extractedData,
+        )
+        console.log("Gemini response received:", JSON.stringify(geminiResponse))
+      } catch (geminiError) {
+        console.error("Gemini processing error:", geminiError)
+        // Fallback response when Gemini fails
+        geminiResponse = {
+          route: "help",
+          message: "I apologize, but I encountered an error. Please try again.",
+          data: {}
+        }
+      }
 
       // Save incoming message to chat history
       await supabase.from("chat_history").insert({
@@ -242,6 +303,7 @@ Deno.serve(async (req) => {
       })
 
       return new Response(JSON.stringify({ status: "success" }), {
+        status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     }
@@ -249,8 +311,8 @@ Deno.serve(async (req) => {
     return new Response("Method not allowed", { status: 405, headers: corsHeaders })
   } catch (error) {
     console.error("Webhook error:", error)
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
+    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }), {
+      status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
   }

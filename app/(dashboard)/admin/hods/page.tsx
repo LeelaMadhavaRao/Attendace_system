@@ -7,7 +7,7 @@ import { UsersTable } from "@/components/users-table"
 import { getHODs } from "@/lib/admin"
 import { UserCheck } from "lucide-react"
 
-export default async function HODsPage() {
+export default async function AdminHODsPage() {
   const supabase = await createClient()
   const {
     data: { user },
@@ -17,9 +17,24 @@ export default async function HODsPage() {
     redirect("/login")
   }
 
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single()
+  console.log("[ADMIN/HODS] User:", user.email)
 
-  if (profile?.role !== "admin") {
+  // Find all profiles for this email
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("email", user.email || "")
+
+  if (!profiles || profiles.length === 0) {
+    console.log("[ADMIN/HODS] No profiles found, redirecting to login")
+    redirect("/login")
+  }
+
+  // Find admin profile specifically
+  const adminProfile = profiles.find(p => p.role === "admin")
+
+  if (!adminProfile) {
+    console.log("[ADMIN/HODS] Admin profile not found, redirecting to dashboard")
     redirect("/dashboard")
   }
 

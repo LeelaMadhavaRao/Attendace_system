@@ -49,7 +49,7 @@ const navItemsByRole: Record<UserRole, NavItem[]> = {
     { title: "Dashboard", href: "/hod", icon: LayoutDashboard },
     { title: "Faculty", href: "/hod/faculty", icon: GraduationCap },
     { title: "Classes", href: "/hod/classes", icon: School },
-    { title: "Attendance Reports", href: "/hod/reports", icon: BarChart3 },
+    { title: "Reports", href: "/hod/reports", icon: BarChart3 },
   ],
   faculty: [
     { title: "Dashboard", href: "/faculty", icon: LayoutDashboard },
@@ -68,6 +68,9 @@ export function Sidebar({ role, userName }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
   const navItems = navItemsByRole[role] || []
+
+  console.log("[SIDEBAR] Rendering with role:", role, "userName:", userName, "pathname:", pathname)
+  console.log("[SIDEBAR] Nav items for role:", navItems.map(item => ({ title: item.title, href: item.href })))
 
   const handleLogout = async () => {
     const supabase = createClient()
@@ -101,6 +104,7 @@ export function Sidebar({ role, userName }: SidebarProps) {
                 <Link
                   key={item.href}
                   href={item.href}
+                  onClick={() => console.log("[SIDEBAR] Navigating to:", item.href, "from:", pathname)}
                   className={cn(
                     "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                     isActive
