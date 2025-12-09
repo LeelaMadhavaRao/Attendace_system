@@ -25,22 +25,14 @@ export async function sendWhatsAppMessage(
   accessToken: string,
   phoneNumberId: string,
 ) {
-  console.log("=== SENDING WHATSAPP MESSAGE ===")
-  console.log("To:", to)
-  console.log("Message:", message)
-  console.log("Phone Number ID:", phoneNumberId)
-  console.log("Access Token exists:", !!accessToken)
-  
   // Validate message is not empty
   if (!message || message.trim() === "") {
-    console.error("Attempted to send empty message, using fallback")
+    console.error("❌ Attempted to send empty message, using fallback")
     message = "I received your message. Please try again."
   }
   
   try {
-    // Use v22.0 API (v17.0 is deprecated)
     const url = `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`
-    console.log("API URL:", url)
     
     const body = {
       messaging_product: "whatsapp",
@@ -48,7 +40,6 @@ export async function sendWhatsAppMessage(
       type: "text",
       text: { body: message },
     }
-    console.log("Request body:", JSON.stringify(body))
     
     const response = await fetch(url, {
       method: "POST",
@@ -59,19 +50,73 @@ export async function sendWhatsAppMessage(
       body: JSON.stringify(body),
     })
 
-    console.log("Response status:", response.status)
     const responseText = await response.text()
-    console.log("Response body:", responseText)
 
     if (!response.ok) {
       const error = JSON.parse(responseText)
-      console.error("WhatsApp API error:", error)
+      console.error("❌ WhatsApp API error:", error)
       throw new Error(`WhatsApp API error: ${JSON.stringify(error)}`)
     }
 
     return JSON.parse(responseText)
   } catch (error) {
-    console.error("Error sending WhatsApp message:", error)
+    console.error("❌ Error sending WhatsApp message:", error)
+    throw error
+  }
+}
+
+export async function sendWhatsAppTemplate(
+  { to, templateName, languageCode = "en", parameters }: {
+    to: string
+    templateName: string
+    languageCode?: string
+    parameters: Array<{ type: string; text: string }>
+  },
+  accessToken: string,
+  phoneNumberId: string,
+) {
+  try {
+    const url = `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`
+    
+    const body = {
+      messaging_product: "whatsapp",
+      to: to,
+      type: "template",
+      template: {
+        name: templateName,
+        language: {
+          code: languageCode
+        },
+        components: [
+          {
+            type: "body",
+            parameters: parameters
+          }
+        ]
+      }
+    }
+    
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    })
+
+    const responseText = await response.text()
+
+    if (!response.ok) {
+      const error = JSON.parse(responseText)
+      console.error("❌ WhatsApp Template API error:", error)
+      throw new Error(`WhatsApp Template API error: ${JSON.stringify(error)}`)
+    }
+
+    console.log("✅ Template message sent:", templateName)
+    return JSON.parse(responseText)
+  } catch (error) {
+    console.error("❌ Error sending WhatsApp template:", error)
     throw error
   }
 }
@@ -112,15 +157,11 @@ export async function downloadWhatsAppMedia(mediaId: string, accessToken: string
 
 export async function parseExcelFile(buffer: ArrayBuffer): Promise<any[]> {
   try {
-    console.log("=== PARSING EXCEL FILE ===")
-    console.log("Buffer size:", buffer.byteLength)
-    
     // Convert ArrayBuffer to Uint8Array
     const data = new Uint8Array(buffer)
     
     // Read the workbook
     const workbook = XLSX.read(data, { type: "array" })
-    console.log("Workbook sheets:", workbook.SheetNames)
     
     // Get the first sheet
     const firstSheetName = workbook.SheetNames[0]
@@ -131,9 +172,6 @@ export async function parseExcelFile(buffer: ArrayBuffer): Promise<any[]> {
       header: 1,  // Use array of arrays format
       defval: ""  // Default value for empty cells
     })
-    
-    console.log("Total rows:", jsonData.length)
-    console.log("First 3 rows:", JSON.stringify(jsonData.slice(0, 3)))
     
     // Assume first row is header
     const headers = jsonData[0] as string[]
@@ -153,12 +191,11 @@ export async function parseExcelFile(buffer: ArrayBuffer): Promise<any[]> {
       return Object.values(student).some(val => val !== "")
     })
     
-    console.log("Parsed students count:", students.length)
-    console.log("Sample student:", students[0] ? JSON.stringify(students[0]) : "none")
+    console.log("✅ Excel parsed: ${students.length} students")
     
     return students
   } catch (error) {
-    console.error("Error parsing Excel file:", error)
+    console.error("❌ Error parsing Excel file:", error)
     throw error
   }
 }
@@ -237,7 +274,19 @@ Response format (ALWAYS valid JSON):
    Format: Set "csv" or "excel" if user says "send file", "download", "export"
 
 7. "parentMessage" - Send notifications to parents
-   data: {"className": "string", "percentage": number or null, "message": "optional"}
+   Use when: "send message to parents", "notify parents", "message parents below X%"
+   data: {"className": string or null, "percentage": number, "message": "optional", "allClasses": boolean}
+   
+   IMPORTANT - Class Selection Logic:
+   - If user says "all classes", "all my classes", "every class" → allClasses: true, className: null
+   - If user mentions specific class name → allClasses: false, className: "class name"
+   - Default percentage is 75 if not specified
+   
+   Examples:
+   ✅ "send message to parents of 75% below" → allClasses: true, className: null, percentage: 75
+   ✅ "notify parents below 80% in all classes" → allClasses: true, className: null, percentage: 80
+   ✅ "send message to parents of 75% below in 3/4CSIT" → allClasses: false, className: "3/4CSIT", percentage: 75
+   ✅ "message parents of students below 70% in CSE-A" → allClasses: false, className: "CSE-A", percentage: 70
 
 8. "addStudent" - Add single student
    data: {"className": "string", "registerNumber": "string", "name": "string", "whatsappNumber": "optional", "parentWhatsappNumber": "optional"}
@@ -314,18 +363,15 @@ ALWAYS return valid JSON with route, message, and data fields.`
       },
     ]
 
-    console.log("=== CALLING GEMINI API ===")
-    console.log(`Available API keys: ${allApiKeys.length}`)
-    console.log("Message to process:", contextMessage)
-    
     // FALLBACK STRATEGY: Try 2.5-flash with all 5 API keys, then 2.0-flash with all 5 API keys
     
     let response: Response | null = null
+    let successfulKey = 0
+    let successfulModel = ""
     
     // Phase 1: Try gemini-2.5-flash with all API keys
     for (let i = 0; i < allApiKeys.length; i++) {
       const apiKey = allApiKeys[i]
-      console.log(`[2.5-flash] Trying API key ${i + 1}/${allApiKeys.length}`)
       
       response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
@@ -343,26 +389,24 @@ ALWAYS return valid JSON with route, message, and data fields.`
           }),
         },
       )
-
-      console.log(`[2.5-flash] API key ${i + 1} response status: ${response.status}`)
       
       if (response.ok) {
-        console.log(`✅ Success with 2.5-flash using API key ${i + 1}`)
+        successfulKey = i + 1
+        successfulModel = "2.5-flash"
+        console.log(`✅ Gemini ${successfulModel} [Key ${successfulKey}]`)
         break
       } else if (response.status !== 429 && response.status !== 404) {
-        // If error is not quota/not found, stop trying
-        console.log(`❌ Non-quota error (${response.status}), stopping attempts`)
+        console.error(`❌ Gemini 2.5-flash error: ${response.status}`)
         break
       }
     }
     
     // Phase 2: If all 2.5-flash attempts failed, try 2.0-flash with all API keys
     if (!response || (!response.ok && (response.status === 429 || response.status === 404))) {
-      console.log("All 2.5-flash API keys exhausted, switching to 2.0-flash")
+      console.log("⚠️ Switching to 2.0-flash fallback")
       
       for (let i = 0; i < allApiKeys.length; i++) {
         const apiKey = allApiKeys[i]
-        console.log(`[2.0-flash] Trying API key ${i + 1}/${allApiKeys.length}`)
         
         response = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
@@ -380,14 +424,14 @@ ALWAYS return valid JSON with route, message, and data fields.`
             }),
           },
         )
-
-        console.log(`[2.0-flash] API key ${i + 1} response status: ${response.status}`)
         
         if (response.ok) {
-          console.log(`✅ Success with 2.0-flash using API key ${i + 1}`)
+          successfulKey = i + 1
+          successfulModel = "2.0-flash"
+          console.log(`✅ Gemini ${successfulModel} [Key ${successfulKey}]`)
           break
         } else if (response.status !== 429 && response.status !== 404) {
-          console.log(`❌ Non-quota error (${response.status}), stopping attempts`)
+          console.error(`❌ Gemini 2.0-flash error: ${response.status}`)
           break
         }
       }
@@ -395,8 +439,8 @@ ALWAYS return valid JSON with route, message, and data fields.`
     
     if (!response || !response.ok) {
       const errorText = response ? await response.text() : "No response"
-      console.error("Gemini API error response:", errorText)
-      console.error(`All ${allApiKeys.length * 2} fallback attempts exhausted (5 keys × 2 models)`)
+      console.error(`❌ All Gemini API keys exhausted (${allApiKeys.length} keys × 2 models)`)
+      console.error("Error:", errorText)
       throw new Error(`Gemini API error: ${response?.status || 'unknown'} - ${errorText}`)
     }
 

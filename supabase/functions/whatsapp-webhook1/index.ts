@@ -1,4 +1,4 @@
-import { createSupabaseClient, sendWhatsAppMessage, downloadWhatsAppMedia, processWithGemini, parseExcelFile, generateAttendanceCSV, uploadAttendanceReport, sendWhatsAppDocument, sendWhatsAppCSVAsDocument, cleanupOldReports, generateUniqueFileName } from "../_shared/utils.ts"
+import { createSupabaseClient, sendWhatsAppMessage, sendWhatsAppTemplate, downloadWhatsAppMedia, processWithGemini, parseExcelFile, generateAttendanceCSV, uploadAttendanceReport, sendWhatsAppDocument, sendWhatsAppCSVAsDocument, cleanupOldReports, generateUniqueFileName } from "../_shared/utils.ts"
 import {
   handleCreateClass,
   handleAssignAttendance,
@@ -44,10 +44,6 @@ function isAttendanceQuery(message: string): boolean {
 }
 
 Deno.serve(async (req) => {
-  console.log("=== WEBHOOK REQUEST RECEIVED ===")
-  console.log("Method:", req.method)
-  console.log("URL:", req.url)
-
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -59,7 +55,6 @@ Deno.serve(async (req) => {
 
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
-    console.log("OPTIONS request - returning ok")
     return new Response("ok", { headers: corsHeaders })
   }
 
@@ -68,46 +63,32 @@ Deno.serve(async (req) => {
 
     // Handle webhook verification (GET request)
     if (req.method === "GET") {
-      console.log("GET request for webhook verification")
       const mode = url.searchParams.get("hub.mode")
       const token = url.searchParams.get("hub.verify_token")
       const challenge = url.searchParams.get("hub.challenge")
 
-      console.log("Verification params - mode:", mode, "token:", token, "challenge:", challenge)
-
       const verifyToken = Deno.env.get("WHATSAPP_WEBHOOK_VERIFY_TOKEN") || "attendance_webhook_token"
-      console.log("Expected verify token:", verifyToken)
 
       if (mode === "subscribe" && token === verifyToken) {
-        console.log("Webhook verified successfully!")
+        console.log("✅ Webhook verified")
         return new Response(challenge, { status: 200, headers: corsHeaders })
       }
 
-      console.log("Webhook verification failed - token mismatch")
+      console.error("❌ Webhook verification failed")
       return new Response("Forbidden", { status: 403, headers: corsHeaders })
     }
 
     // Handle webhook POST (incoming messages)
     if (req.method === "POST") {
-      console.log("POST request - processing incoming message")
-
       const bodyText = await req.text()
-      console.log("Raw body:", bodyText)
-
       const body = JSON.parse(bodyText)
-      console.log("Parsed body:", JSON.stringify(body, null, 2))
 
       // Extract message data
       const entry = body.entry?.[0] as WebhookEntry
       const changes = entry?.changes?.[0]
       const message = changes?.value?.messages?.[0]
 
-      console.log("Entry:", entry ? "found" : "not found")
-      console.log("Changes:", changes ? "found" : "not found")
-      console.log("Message:", message ? JSON.stringify(message) : "not found")
-
       if (!message) {
-        console.log("No message found in webhook payload - returning 'no message'")
         return new Response(JSON.stringify({ status: "no message" }), {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -119,53 +100,36 @@ Deno.serve(async (req) => {
       const messageId = message.id
       const hasDocument = !!(message.document || message.image)
 
-      console.log("Phone number:", phoneNumber)
-      console.log("Message text:", messageText)
-      console.log("Message ID:", messageId)
-      console.log("Has document:", hasDocument)
-
       // Validate message text is not empty (unless it's a document upload)
       if (!hasDocument && (!messageText || messageText.trim().length === 0)) {
-        console.log("Empty message text and no document - ignoring")
         return new Response(JSON.stringify({ status: "empty message" }), {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         })
       }
 
-      console.log("Processing message...")
-      console.log("Message type:", hasDocument ? "document" : "text")
-      console.log("Message ID:", messageId)
+      console.log("📩 Message from:", phoneNumber, "|", hasDocument ? "[Document]" : messageText.substring(0, 50))
 
       // Initialize Supabase client
       const supabaseUrl = Deno.env.get("SUPABASE_URL")!
       const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-      console.log("Supabase URL:", supabaseUrl)
-      console.log("Supabase key exists:", !!supabaseKey)
 
       const supabase = createSupabaseClient({ supabaseUrl, supabaseKey })
 
       // Get faculty by WhatsApp number
-      console.log("Looking up faculty with WhatsApp number:", phoneNumber)
       const { data: faculty, error: facultyError } = await supabase
         .from("faculty")
         .select("id, profile_id, whatsapp_number")
         .or(`whatsapp_number.eq.${phoneNumber},whatsapp_number.eq.+${phoneNumber}`)
         .single()
 
-      console.log("Faculty lookup result:", faculty ? JSON.stringify(faculty) : "null")
-      console.log("Faculty lookup error:", facultyError ? JSON.stringify(facultyError) : "null")
-
       if (!faculty) {
-        console.log("Faculty not found - sending not authorized message")
+        console.error("❌ Unauthorized:", phoneNumber)
         const accessToken = Deno.env.get("WHATSAPP_ACCESS_TOKEN")!
         const phoneNumberId = Deno.env.get("WHATSAPP_PHONE_NUMBER_ID")!
 
-        console.log("Access token exists:", !!accessToken)
-        console.log("Phone number ID:", phoneNumberId)
-
         try {
-          const sendResult = await sendWhatsAppMessage(
+          await sendWhatsAppMessage(
             {
               to: phoneNumber,
               message: "You are not registered as a faculty member. Please contact the administrator.",
@@ -173,9 +137,8 @@ Deno.serve(async (req) => {
             accessToken,
             phoneNumberId,
           )
-          console.log("Send message result:", JSON.stringify(sendResult))
         } catch (sendError) {
-          console.error("Error sending not authorized message:", sendError)
+          console.error("❌ Error sending not authorized message:", sendError)
         }
 
         return new Response(JSON.stringify({ status: "not authorized" }), {
@@ -183,27 +146,23 @@ Deno.serve(async (req) => {
         })
       }
 
+      console.log("✅ Faculty:", faculty.id)
+
       // Handle media if present
       let extractedData = null
       let mediaType = null
 
       if (message.document || message.image) {
-        console.log("Document/Image detected")
         const mediaId = message.document?.id || message.image?.id
         mediaType = message.document?.mime_type || message.image?.mime_type
         const fileName = message.document?.filename || "unknown"
 
-        console.log("Media ID:", mediaId)
-        console.log("Media type:", mediaType)
-        console.log("File name:", fileName)
-
         if (mediaId && (mediaType?.includes("sheet") || fileName?.endsWith(".xlsx") || fileName?.endsWith(".xls"))) {
-          console.log("Excel file detected, downloading...")
+          console.log("📄 Processing Excel:", fileName)
           const accessToken = Deno.env.get("WHATSAPP_ACCESS_TOKEN")!
 
           try {
             const mediaBuffer = await downloadWhatsAppMedia(mediaId, accessToken)
-            console.log("Excel file downloaded, size:", mediaBuffer.byteLength)
 
             // Parse Excel file
             const students = await parseExcelFile(mediaBuffer)
@@ -215,10 +174,8 @@ Deno.serve(async (req) => {
               mediaId: mediaId,
               students: students
             }
-
-            console.log("Excel data extracted:", JSON.stringify(extractedData))
           } catch (downloadError) {
-            console.error("Error downloading/processing Excel:", downloadError)
+            console.error("❌ Error processing Excel:", downloadError)
             extractedData = {
               receivedDocument: true,
               fileName: fileName,
@@ -236,7 +193,7 @@ Deno.serve(async (req) => {
         .single()
 
       if (existingMessage) {
-        console.log("Message already processed, skipping to prevent duplicates. Message ID:", messageId)
+        console.log("⚠️ Duplicate message skipped:", messageId)
         return new Response(JSON.stringify({ status: "duplicate message" }), {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -254,9 +211,7 @@ Deno.serve(async (req) => {
       // IMPORTANT: For attendance fetch queries, ignore chat history to prevent
       // previous percentage filters from affecting the current request
       let chatHistory: Array<{ role: string; content: string }> = []
-      if (isAttendanceQuery(messageText)) {
-        console.log("Attendance query detected - ignoring chat history to prevent percentage filter leakage")
-      } else {
+      if (!isAttendanceQuery(messageText)) {
         chatHistory = (history || []).reverse().map((h: any) => ({
           role: h.message_type === "incoming" ? "user" : "assistant",
           content: h.message,
@@ -271,16 +226,13 @@ Deno.serve(async (req) => {
         Deno.env.get("GEMINI_API_KEY_4"),
         Deno.env.get("GEMINI_API_KEY_5"),
       ].filter(key => key) as string[] // Remove any undefined keys
-      
-      console.log(`Loaded ${geminiApiKeys.length} Gemini API keys`)
 
       let geminiResponse
       
       // DECISION POINT: Handle documents differently from text messages
       if (extractedData?.students && Array.isArray(extractedData.students)) {
         // DOCUMENT FLOW: Excel file with student data uploaded
-        console.log("=== DOCUMENT PROCESSING FLOW ===")
-        console.log(`Extracted ${extractedData.students.length} students from Excel`)
+        console.log("📊 Processing", extractedData.students.length, "students from Excel")
         
         // Prepare message for Gemini with extracted student data
         const documentMessage = `User uploaded an Excel file with ${extractedData.students.length} students. The student data has been extracted. Please process this student list and create their profiles.`
@@ -294,11 +246,9 @@ Deno.serve(async (req) => {
             extractedData,
             geminiApiKeys,
           )
-          console.log("Gemini response for document:", JSON.stringify(geminiResponse))
           
           // Override response to ensure createStudents route is used
           if (geminiResponse.route !== "createStudents") {
-            console.log("Gemini didn't return createStudents route, forcing it...")
             geminiResponse = {
               route: "createStudents",
               message: geminiResponse.message || "Processing student data from Excel file...",
@@ -312,7 +262,7 @@ Deno.serve(async (req) => {
             geminiResponse.data.students = extractedData.students
           }
         } catch (geminiError) {
-          console.error("Gemini processing error for document:", geminiError)
+          console.error("❌ Gemini error (document):", geminiError)
           // Fallback: directly create students without Gemini
           geminiResponse = {
             route: "createStudents",
@@ -325,8 +275,6 @@ Deno.serve(async (req) => {
         }
       } else {
         // TEXT MESSAGE FLOW: Normal text processing
-        console.log("=== TEXT MESSAGE PROCESSING FLOW ===")
-        
         try {
           geminiResponse = await processWithGemini(
             messageText,
@@ -336,9 +284,8 @@ Deno.serve(async (req) => {
             extractedData,
             geminiApiKeys,
           )
-          console.log("Gemini response received:", JSON.stringify(geminiResponse))
         } catch (geminiError) {
-          console.error("Gemini processing error:", geminiError)
+          console.error("❌ Gemini error (text):", geminiError)
           // Fallback response when Gemini fails
           geminiResponse = {
             route: "help",
@@ -370,6 +317,8 @@ Deno.serve(async (req) => {
 
       const accessToken = Deno.env.get("WHATSAPP_ACCESS_TOKEN")!
       const phoneNumberId = Deno.env.get("WHATSAPP_PHONE_NUMBER_ID")!
+
+      console.log("🔀 Route:", geminiResponse.route)
 
       try {
         switch (geminiResponse.route) {
@@ -441,6 +390,14 @@ Deno.serve(async (req) => {
             responseMessage = await handleParentMessage(routeContext, {
               sendMessage: async (params: { to: string; message: string }) => {
                 return await sendWhatsAppMessage(params, accessToken, phoneNumberId)
+              },
+              sendTemplate: async (params: { 
+                to: string
+                templateName: string
+                languageCode?: string
+                parameters: Array<{ type: string; text: string }>
+              }) => {
+                return await sendWhatsAppTemplate(params, accessToken, phoneNumberId)
               },
             })
             break
