@@ -11,6 +11,54 @@ interface RouteHandlerContext {
   phoneNumber: string
 }
 
+// Calculate number of periods based on time duration
+// Each period is 45 minutes
+function calculatePeriods(startTime: string, endTime: string): number {
+  try {
+    // Parse time strings (format: "HH:MM" or "HH:MM AM/PM")
+    const parseTime = (timeStr: string): Date => {
+      const now = new Date()
+      const timeParts = timeStr.trim().toLowerCase()
+      
+      // Handle 12-hour format
+      if (timeParts.includes('am') || timeParts.includes('pm')) {
+        const isPM = timeParts.includes('pm')
+        const timeOnly = timeParts.replace(/am|pm/gi, '').trim()
+        const [hours, minutes] = timeOnly.split(':').map(Number)
+        
+        let hour24 = hours
+        if (isPM && hours !== 12) hour24 = hours + 12
+        if (!isPM && hours === 12) hour24 = 0
+        
+        now.setHours(hour24, minutes || 0, 0, 0)
+      } else {
+        // Handle 24-hour format
+        const [hours, minutes] = timeStr.split(':').map(Number)
+        now.setHours(hours, minutes || 0, 0, 0)
+      }
+      
+      return now
+    }
+    
+    const start = parseTime(startTime)
+    const end = parseTime(endTime)
+    
+    // Calculate difference in minutes
+    const diffMs = end.getTime() - start.getTime()
+    const diffMinutes = diffMs / (1000 * 60)
+    
+    // Calculate periods (45 minutes = 1 period)
+    const periods = Math.round(diffMinutes / 45)
+    
+    console.log(`Time calculation: ${startTime} to ${endTime} = ${diffMinutes} minutes = ${periods} periods`)
+    
+    return Math.max(1, periods) // Minimum 1 period
+  } catch (error) {
+    console.error("Error calculating periods:", error)
+    return 1 // Default to 1 period on error
+  }
+}
+
 export async function handleCreateClass(ctx: RouteHandlerContext): Promise<string> {
   const data = ctx.geminiResponse.data as { className?: string; semester?: string; academicYear?: string }
 
@@ -54,8 +102,38 @@ export async function handleAssignAttendance(ctx: RouteHandlerContext): Promise<
     endTime: string
     subject: string
     type: "absentees" | "presentees"
-    rollNumbers: number[]
+    rollNumbers: string[]
   }
+
+  // Validate required fields
+  if (!data.className) {
+    return "Class name is required. Please specify the class."
+  }
+  if (!data.date) {
+    return "Date is required. Please specify the date (YYYY-MM-DD)."
+  }
+  if (!data.startTime || !data.endTime) {
+    return "Time range is required. Please specify both start and end times."
+  }
+  if (!data.type || !["absentees", "presentees"].includes(data.type)) {
+    return "Attendance type is required. Please specify 'absentees' or 'presentees'."
+  }
+  // Allow empty rollNumbers for "no absentees" or "no presentees" scenarios
+  if (!data.rollNumbers) {
+    data.rollNumbers = []
+  }
+
+  console.log("Attendance request validated:", {
+    className: data.className,
+    date: data.date,
+    startTime: data.startTime,
+    endTime: data.endTime,
+    subject: data.subject,
+    type: data.type,
+    rollCount: data.rollNumbers.length,
+    allPresent: data.type === "absentees" && data.rollNumbers.length === 0,
+    allAbsent: data.type === "presentees" && data.rollNumbers.length === 0,
+  })
 
   // Get class
   const { data: classData } = await ctx.supabase
@@ -95,6 +173,30 @@ export async function handleAssignAttendance(ctx: RouteHandlerContext): Promise<
     }
   }
 
+  // Calculate number of periods based on time duration
+  const totalPeriods = calculatePeriods(data.startTime, data.endTime)
+  console.log(`Session from ${data.startTime} to ${data.endTime} = ${totalPeriods} periods`)
+  
+  // Check if attendance already exists for this session (same class, date, time)
+  const { data: existingSession } = await ctx.supabase
+    .from("attendance_sessions")
+    .select("id")
+    .eq("class_id", classData.id)
+    .eq("date", data.date)
+    .eq("start_time", data.startTime)
+    .eq("end_time", data.endTime)
+    .single()
+
+  if (existingSession) {
+    console.log("Attendance session already exists for this time slot")
+    return `⚠️ Attendance for ${data.className} on ${data.date} from ${data.startTime} to ${data.endTime} has already been marked.
+
+To edit this attendance, please reply with:
+"Edit attendance for ${data.className} on ${data.date} from ${data.startTime} to ${data.endTime} - Absentees/Presentees: [list]"
+
+This requires confirmation before making changes.`
+  }
+  
   // Create attendance session
   const { data: session, error: sessionError } = await ctx.supabase
     .from("attendance_sessions")
@@ -105,13 +207,14 @@ export async function handleAssignAttendance(ctx: RouteHandlerContext): Promise<
       date: data.date,
       start_time: data.startTime,
       end_time: data.endTime,
-      total_periods: 1,
+      total_periods: totalPeriods,
     })
     .select()
     .single()
 
   if (sessionError) {
-    return "Failed to create attendance session."
+    console.error("Session creation error:", sessionError)
+    return `Failed to create attendance session: ${sessionError.message}`
   }
 
   // Get all students
@@ -124,12 +227,12 @@ export async function handleAssignAttendance(ctx: RouteHandlerContext): Promise<
     return "No students found in this class."
   }
 
-  // Mark attendance
+  // Mark attendance with periods
   const attendanceRecords = students.map((student: any) => {
-    const rollNumber = parseInt(student.register_number)
+    // Compare as strings since register_number is stored as text
     const isPresent = data.type === "presentees"
-      ? data.rollNumbers.includes(rollNumber)
-      : !data.rollNumbers.includes(rollNumber)
+      ? data.rollNumbers.includes(student.register_number)
+      : !data.rollNumbers.includes(student.register_number)
 
     return {
       session_id: session.id,
@@ -138,19 +241,31 @@ export async function handleAssignAttendance(ctx: RouteHandlerContext): Promise<
     }
   })
 
+  console.log(`Creating ${attendanceRecords.length} attendance records`)
   const { error: recordError } = await ctx.supabase.from("attendance_records").insert(attendanceRecords)
 
   if (recordError) {
-    return "Failed to record attendance."
+    console.error("Record insertion error:", recordError)
+    return `Failed to record attendance: ${recordError.message}`
   }
 
-  const absentCount = data.type === "absentees" ? data.rollNumbers.length : students.length - data.rollNumbers.length
+  const presentCount = data.type === "presentees" ? data.rollNumbers.length : students.length - data.rollNumbers.length
+  const absentCount = students.length - presentCount
 
-  return `✅ Attendance recorded successfully!\n\nClass: ${data.className}\nDate: ${data.date}\nSubject: ${data.subject}\nPresent: ${students.length - absentCount}\nAbsent: ${absentCount}`
+  return `✅ Attendance recorded successfully!
+
+Class: ${data.className}
+Date: ${data.date}
+Time: ${data.startTime} to ${data.endTime}
+Periods: ${totalPeriods}
+Subject: ${data.subject || 'Not specified'}
+
+Present: ${presentCount} students (${totalPeriods} periods each)
+Absent: ${absentCount} students`
 }
 
 export async function handleAttendanceFetch(ctx: RouteHandlerContext): Promise<string> {
-  const data = ctx.geminiResponse.data as { className?: string; percentage?: number }
+  const data = ctx.geminiResponse.data as { className?: string; percentage?: number; format?: string }
 
   // Get class
   const { data: classData } = await ctx.supabase
@@ -177,38 +292,54 @@ export async function handleAttendanceFetch(ctx: RouteHandlerContext): Promise<s
   const studentStats = []
 
   for (const student of students) {
-    // Get session IDs for this class
-    const { data: sessions } = await ctx.supabase
-      .from("attendance_sessions")
-      .select("id")
-      .eq("class_id", classData.id)
-
-    const sessionIds = sessions?.map((s: any) => s.id) || []
-
-    if (sessionIds.length === 0) continue
-
-    const { count: total } = await ctx.supabase
+    // Get all attendance records with session details
+    const { data: records } = await ctx.supabase
       .from("attendance_records")
-      .select("*", { count: "exact", head: true })
+      .select(`
+        *,
+        attendance_sessions!inner(total_periods)
+      `)
       .eq("student_id", student.id)
-      .in("session_id", sessionIds)
+      .eq("attendance_sessions.class_id", classData.id)
 
-    const { count: present } = await ctx.supabase
-      .from("attendance_records")
-      .select("*", { count: "exact", head: true })
-      .eq("student_id", student.id)
-      .eq("is_present", true)
-      .in("session_id", sessionIds)
+    if (!records || records.length === 0) continue
 
-    const percentage = total > 0 ? Math.round(((present || 0) / total) * 100) : 0
+    // Calculate total periods offered and periods attended
+    let totalPeriodsOffered = 0
+    let periodsAttended = 0
 
-    if (!data.percentage || percentage < data.percentage) {
+    records.forEach((record: any) => {
+      const sessionPeriods = record.attendance_sessions?.total_periods || 1
+      totalPeriodsOffered += sessionPeriods
+      
+      if (record.is_present) {
+        periodsAttended += record.periods_present || sessionPeriods
+      }
+    })
+
+    const percentage = totalPeriodsOffered > 0 
+      ? Math.round((periodsAttended / totalPeriodsOffered) * 100) 
+      : 0
+
+    // If percentage filter is specified, only include students below that percentage
+    // If no percentage filter, include all students
+    if (data.percentage === undefined || data.percentage === null) {
+      // Show all students
       studentStats.push({
         registerNumber: student.register_number,
         name: student.name,
         percentage,
-        attended: present || 0,
-        total: total || 0,
+        periodsAttended,
+        totalPeriods: totalPeriodsOffered,
+      })
+    } else if (percentage < data.percentage) {
+      // Show only students below the specified percentage
+      studentStats.push({
+        registerNumber: student.register_number,
+        name: student.name,
+        percentage,
+        periodsAttended,
+        totalPeriods: totalPeriodsOffered,
       })
     }
   }
@@ -217,15 +348,123 @@ export async function handleAttendanceFetch(ctx: RouteHandlerContext): Promise<s
     return "No students found matching the criteria."
   }
 
-  let response = `📊 *Attendance Report - ${classData.name}*\n\n`
+  // Sort by percentage
+  studentStats.sort((a, b) => a.percentage - b.percentage)
 
-  studentStats
-    .sort((a, b) => a.percentage - b.percentage)
-    .forEach((s) => {
-      response += `${s.registerNumber} - ${s.name}\n${s.percentage}% (${s.attended}/${s.total})\n\n`
-    })
+  // Always return "document" - always send as CSV
+  // Store stats in context for document generation in main webhook
+  ctx.geminiResponse.data.studentStats = studentStats
+  ctx.geminiResponse.data.classId = classData.id
+  ctx.geminiResponse.data.className = classData.name
+  return "document"
+}
 
-  return response
+export async function handleEditAttendance(ctx: RouteHandlerContext): Promise<string> {
+  const data = ctx.geminiResponse.data as {
+    className: string
+    date: string
+    startTime: string
+    endTime: string
+    subject: string
+    type: "absentees" | "presentees"
+    rollNumbers: string[]
+    confirmed?: boolean
+  }
+
+  // Check if user confirmed the edit
+  if (!data.confirmed) {
+    return `⚠️ Confirmation required to edit attendance!
+
+You are about to edit attendance for ${data.className} on ${data.date} from ${data.startTime} to ${data.endTime}.
+
+To confirm the edit, reply:
+"Confirm edit attendance for ${data.className} on ${data.date} - ${data.type}: ${data.rollNumbers.join(", ")}"`
+  }
+
+  // Validate required fields
+  if (!data.className || !data.date || !data.startTime || !data.endTime) {
+    return "Missing required information to edit attendance."
+  }
+
+  // Get class
+  const { data: classData } = await ctx.supabase
+    .from("classes")
+    .select("id")
+    .eq("faculty_id", ctx.facultyId)
+    .eq("name", data.className)
+    .single()
+
+  if (!classData) {
+    return `Class "${data.className}" not found.`
+  }
+
+  // Find the existing session
+  const { data: session } = await ctx.supabase
+    .from("attendance_sessions")
+    .select("id")
+    .eq("class_id", classData.id)
+    .eq("date", data.date)
+    .eq("start_time", data.startTime)
+    .eq("end_time", data.endTime)
+    .single()
+
+  if (!session) {
+    return `No attendance record found for ${data.className} on ${data.date} from ${data.startTime} to ${data.endTime}.`
+  }
+
+  // Get all students
+  const { data: students } = await ctx.supabase
+    .from("students")
+    .select("id, register_number")
+    .eq("class_id", classData.id)
+
+  if (!students || students.length === 0) {
+    return "No students found in this class."
+  }
+
+  // Delete existing records for this session
+  const { error: deleteError } = await ctx.supabase
+    .from("attendance_records")
+    .delete()
+    .eq("session_id", session.id)
+
+  if (deleteError) {
+    console.error("Error deleting old attendance records:", deleteError)
+    return "Failed to update attendance. Please try again."
+  }
+
+  // Create new attendance records
+  const attendanceRecords = students.map((student: any) => {
+    const isPresent = data.type === "presentees"
+      ? data.rollNumbers.includes(student.register_number)
+      : !data.rollNumbers.includes(student.register_number)
+
+    return {
+      session_id: session.id,
+      student_id: student.id,
+      is_present: isPresent,
+    }
+  })
+
+  const { error: recordError } = await ctx.supabase.from("attendance_records").insert(attendanceRecords)
+
+  if (recordError) {
+    console.error("Record insertion error:", recordError)
+    return `Failed to update attendance: ${recordError.message}`
+  }
+
+  const presentCount = data.type === "presentees" ? data.rollNumbers.length : students.length - data.rollNumbers.length
+  const absentCount = students.length - presentCount
+
+  return `✅ Attendance updated successfully!
+
+Class: ${data.className}
+Date: ${data.date}
+Time: ${data.startTime} to ${data.endTime}
+Subject: ${data.subject || 'Not specified'}
+
+Present: ${presentCount} students
+Absent: ${absentCount} students`
 }
 
 export async function handleHelp(): Promise<string> {
@@ -235,18 +474,40 @@ export async function handleHelp(): Promise<string> {
 • "Create class [name]" - Create a new class
 • "Add student" - Add a single student
 
-📝 *Attendance*
-Format: Date, Time, Class, Subject, Absentees/Presentees
-Example: "06-12-2025, 9am-12pm, 3/4 CSIT, OOAD, Absentees: 1,2,3"
+👥 *Student Management*
+• Send Excel file with columns: Register Number, Name, WhatsApp, Parent WhatsApp
+
+📝 *Mark Attendance*
+• "Mark attendance for [class] on [date] from [start time] to [end time]"
+• Then specify absentees or presentees with roll numbers
+• *Period Calculation:* Each 45 minutes = 1 period
+  - 9:00 AM to 12:00 PM = 4 periods
+  - 9:00 AM to 10:30 AM = 2 periods
+  - Students get credit for all periods they attended
 
 📊 *Reports*
-• "Get attendance for [class]" - View all students
-• "Students below 75% in [class]" - Low attendance
+• "Show attendance for [class]" - Get text report
+• "Show attendance for [class] as CSV/Excel/File" - Get downloadable report
+• "Students below 75% in [class]" - Filter low attendance
+• "Students below 75% in [class] as CSV" - Downloadable filtered report
 
-💬 *Parent Communication*
-• "Send message to parents of [class] below [%]"
+*Report Formats:*
+- Add "as CSV", "as file", "export", "download" to send as downloadable document
+- Reports show attendance as: X/Y periods (percentage%)
 
-Need help? Just ask naturally!`
+*Examples:*
+"Mark attendance for CSE-A on 2024-01-15 from 9:00 AM to 12:00 PM for Data Structures"
+"Absentees: 1, 5, 12"
+
+"Show attendance for CSE-A"
+"Show attendance for CSE-A as CSV"
+
+*Roll Number Shorthand*
+Same serial? Write once! 
+"23B91A0738, 27, 28" = 738, 727, 728
+New serial? New line:
+"23B91A0738, 27
+24B91A0714" = 738, 727, 714`
 }
 
 export async function handleCreateStudents(ctx: RouteHandlerContext): Promise<string> {
@@ -295,6 +556,7 @@ export async function handleCreateStudents(ctx: RouteHandlerContext): Promise<st
     whatsapp_number: s.whatsappNumber,
     parent_whatsapp_number: s.parentWhatsappNumber,
     class_id: classData.id,
+    faculty_id: ctx.facultyId, // Link student to faculty
   }))
 
   const { error, data: inserted } = await ctx.supabase
@@ -342,6 +604,7 @@ export async function handleAddStudent(ctx: RouteHandlerContext): Promise<string
     whatsapp_number: data.whatsappNumber,
     parent_whatsapp_number: data.parentWhatsappNumber,
     class_id: classData.id,
+    faculty_id: ctx.facultyId, // Link student to faculty
   })
 
   if (error) {
