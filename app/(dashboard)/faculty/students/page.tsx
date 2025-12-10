@@ -73,30 +73,41 @@ export default async function FacultyStudentsPage() {
       (students || []).map(async (student) => {
         const className = classes?.find((c) => c.id === student.class_id)?.name || ""
 
-        // Get sessions for this class
+        // Get sessions for this class WITH total_periods
         const { data: sessions } = await adminClient
           .from("attendance_sessions")
-          .select("id")
+          .select("id, total_periods")
           .eq("class_id", student.class_id)
 
         const sessionIds = sessions?.map((s) => s.id) || []
 
         let attendance = 0
         if (sessionIds.length > 0) {
-          const { count: total } = await adminClient
+          // Get all attendance records for this student in these sessions
+          const { data: attendanceRecords } = await adminClient
             .from("attendance_records")
-            .select("*", { count: "exact", head: true })
+            .select("session_id, is_present")
             .eq("student_id", student.id)
             .in("session_id", sessionIds)
 
-          const { count: present } = await adminClient
-            .from("attendance_records")
-            .select("*", { count: "exact", head: true })
-            .eq("student_id", student.id)
-            .in("session_id", sessionIds)
-            .eq("is_present", true)
+          // Create a map of session_id to is_present
+          const recordMap = new Map(attendanceRecords?.map(r => [r.session_id, r.is_present]) || [])
 
-          attendance = total && total > 0 ? Math.round(((present || 0) / total) * 100) : 0
+          // Calculate total periods and present periods
+          let totalPeriods = 0
+          let presentPeriods = 0
+
+          sessions?.forEach(session => {
+            const periods = session.total_periods || 1
+            totalPeriods += periods
+
+            const isPresent = recordMap.get(session.id) ?? false
+            if (isPresent) {
+              presentPeriods += periods
+            }
+          })
+
+          attendance = totalPeriods > 0 ? Math.round((presentPeriods / totalPeriods) * 100) : 0
         }
 
         return {

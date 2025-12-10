@@ -105,28 +105,48 @@ export default async function HODFacultyDetailPage({
       classes.map(async (cls) => {
         const { data: sessions } = await adminClient
           .from("attendance_sessions")
-          .select("id")
+          .select("id, total_periods")
           .eq("class_id", cls.id)
 
         const sessionIds = sessions?.map((s) => s.id) || []
 
-        let totalRecords = 0
-        let presentCount = 0
+        let totalPeriods = 0
+        let presentPeriods = 0
 
         if (sessionIds.length > 0) {
-          const { count: total } = await adminClient
+          // Get all attendance records for these sessions
+          const { data: allRecords } = await adminClient
             .from("attendance_records")
-            .select("*", { count: "exact", head: true })
+            .select("session_id, is_present")
             .in("session_id", sessionIds)
 
-          const { count: present } = await adminClient
-            .from("attendance_records")
-            .select("*", { count: "exact", head: true })
-            .in("session_id", sessionIds)
-            .eq("is_present", true)
+          // Create a map to count attendance per session
+          const sessionAttendance = new Map<string, { total: number; present: number }>()
 
-          totalRecords = total || 0
-          presentCount = present || 0
+          sessions?.forEach(session => {
+            sessionAttendance.set(session.id, { total: 0, present: 0 })
+          })
+
+          allRecords?.forEach(record => {
+            const sessionData = sessionAttendance.get(record.session_id)
+            if (sessionData) {
+              sessionData.total += 1
+              if (record.is_present) {
+                sessionData.present += 1
+              }
+            }
+          })
+
+          // Calculate periods-based attendance
+          sessions?.forEach(session => {
+            const periods = session.total_periods || 1
+            const sessionData = sessionAttendance.get(session.id)
+            
+            if (sessionData && sessionData.total > 0) {
+              totalPeriods += periods * sessionData.total
+              presentPeriods += periods * sessionData.present
+            }
+          })
         }
 
         const { count: studentCount } = await adminClient
@@ -134,7 +154,7 @@ export default async function HODFacultyDetailPage({
           .select("*", { count: "exact", head: true })
           .eq("class_id", cls.id)
 
-        const attendance = totalRecords > 0 ? Math.round((presentCount / totalRecords) * 100) : 0
+        const attendance = totalPeriods > 0 ? Math.round((presentPeriods / totalPeriods) * 100) : 0
 
         return {
           ...cls,

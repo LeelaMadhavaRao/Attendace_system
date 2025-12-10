@@ -71,10 +71,10 @@ export default async function HODDashboard() {
         .in("class_id", classIds)
       studentCount = students || 0
 
-      // Get attendance sessions for these classes
+      // Get attendance sessions for these classes WITH total_periods
       const { data: sessionsList } = await supabase
         .from("attendance_sessions")
-        .select("id")
+        .select("id, total_periods")
         .in("faculty_id", facultyIds)
       
       if (sessionsList && sessionsList.length > 0) {
@@ -83,35 +83,77 @@ export default async function HODDashboard() {
         // Get all attendance records for these sessions
         const { data: allRecords } = await supabase
           .from("attendance_records")
-          .select("is_present")
+          .select("session_id, is_present")
           .in("session_id", sessionIds)
 
         if (allRecords && allRecords.length > 0) {
-          const presentCount = allRecords.filter(r => r.is_present).length
-          totalAttendancePercentage = Math.round((presentCount / allRecords.length) * 100)
+          // Calculate periods-based attendance
+          const recordMap = new Map(allRecords.map(r => [r.session_id, r]))
+          let totalPeriods = 0
+          let presentPeriods = 0
+
+          sessionsList.forEach(session => {
+            const periods = session.total_periods || 1
+            const records = allRecords.filter(r => r.session_id === session.id)
+            
+            records.forEach(record => {
+              totalPeriods += periods
+              if (record.is_present) {
+                presentPeriods += periods
+              }
+            })
+          })
+
+          totalAttendancePercentage = totalPeriods > 0 ? Math.round((presentPeriods / totalPeriods) * 100) : 0
         }
       }
 
       // Get low attendance students (below 75%)
       const { data: studentsData } = await supabase
         .from("students")
-        .select("id")
+        .select("id, class_id")
         .in("class_id", classIds)
 
       if (studentsData && studentsData.length > 0) {
         for (const student of studentsData) {
-          // Get attendance records for this student
-          const { data: studentRecords } = await supabase
-            .from("attendance_records")
-            .select("is_present")
-            .eq("student_id", student.id)
+          // Get sessions for this student's class
+          const { data: classSessions } = await supabase
+            .from("attendance_sessions")
+            .select("id, total_periods")
+            .eq("class_id", student.class_id)
 
-          if (studentRecords && studentRecords.length > 0) {
-            const presentCount = studentRecords.filter(r => r.is_present).length
-            const attendancePercentage = (presentCount / studentRecords.length) * 100
+          if (classSessions && classSessions.length > 0) {
+            const classSessionIds = classSessions.map(s => s.id)
 
-            if (attendancePercentage < 75) {
-              lowAttendanceCount++
+            // Get attendance records for this student in their class sessions only
+            const { data: studentRecords } = await supabase
+              .from("attendance_records")
+              .select("session_id, is_present")
+              .eq("student_id", student.id)
+              .in("session_id", classSessionIds)
+
+            if (studentRecords && studentRecords.length > 0) {
+              const recordMap = new Map(studentRecords.map(r => [r.session_id, r.is_present]))
+              let totalPeriods = 0
+              let presentPeriods = 0
+
+              classSessions.forEach(session => {
+                const periods = session.total_periods || 1
+                const isPresent = recordMap.get(session.id)
+                
+                if (isPresent !== undefined) {
+                  totalPeriods += periods
+                  if (isPresent) {
+                    presentPeriods += periods
+                  }
+                }
+              })
+
+              const attendancePercentage = totalPeriods > 0 ? (presentPeriods / totalPeriods) * 100 : 0
+
+              if (attendancePercentage < 75) {
+                lowAttendanceCount++
+              }
             }
           }
         }

@@ -5,7 +5,6 @@ import {
   handleAttendanceFetch,
   handleHelp,
   handleCreateStudents,
-  handleAddStudent,
   handleEditAttendance
 } from "../route-handlers/index.ts"
 
@@ -333,13 +332,13 @@ Deno.serve(async (req) => {
             responseMessage = await handleAttendanceFetch(routeContext)
             // Check if this is a document request
             if (responseMessage === "document") {
-              const { studentStats, className } = geminiResponse.data
+              const { studentStats, className, edgeCaseReason } = geminiResponse.data
               try {
                 // Clean up all old files first
                 await cleanupOldReports(supabase)
 
                 // Generate CSV
-                const csvContent = generateAttendanceCSV(className, studentStats)
+                const csvContent = generateAttendanceCSV(className, studentStats, edgeCaseReason)
                 const fileName = generateUniqueFileName(className)
 
                 // Upload to storage to get public URL
@@ -375,10 +374,6 @@ Deno.serve(async (req) => {
 
           case "createStudents":
             responseMessage = await handleCreateStudents(routeContext)
-            break
-
-          case "addStudent":
-            responseMessage = await handleAddStudent(routeContext)
             break
 
           case "editAttendance":

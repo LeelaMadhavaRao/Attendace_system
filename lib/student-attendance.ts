@@ -107,6 +107,7 @@ export async function getStudentAttendance(
         date,
         start_time,
         end_time,
+        total_periods,
         subject_id,
         subjects (
           name
@@ -159,6 +160,14 @@ export async function getStudentAttendance(
       }
     }
 
+    console.log("[ATTENDANCE] Records fetched:", {
+      studentId: student.id,
+      classId: student.class_id,
+      className: actualClassName,
+      totalSessionsForClass: sessions.length,
+      recordsFound: records?.length || 0,
+    })
+
     // Step 5: Process attendance data
     const attendanceMap = new Map<string, boolean>()
     if (records) {
@@ -176,15 +185,31 @@ export async function getStudentAttendance(
       isPresent: attendanceMap.get(session.id) ?? false,
     }))
 
-    const presentCount = detailedRecords.filter((r) => r.isPresent).length
+    // Calculate attendance based on PERIODS, not sessions
+    let totalPeriods = 0
+    let presentPeriods = 0
+
+    sessions.forEach((session) => {
+      const periods = session.total_periods || 1
+      totalPeriods += periods
+
+      const isPresent = attendanceMap.get(session.id) ?? false
+      if (isPresent) {
+        presentPeriods += periods
+      }
+    })
+
     const totalSessions = sessions.length
+    const presentCount = detailedRecords.filter((r) => r.isPresent).length
     const absentCount = totalSessions - presentCount
-    const attendancePercentage = totalSessions > 0 ? Math.round((presentCount / totalSessions) * 100) : 0
+    const attendancePercentage = totalPeriods > 0 ? Math.round((presentPeriods / totalPeriods) * 100) : 0
 
     console.log("[ATTENDANCE] Attendance calculated:", {
       studentId: student.id,
       totalSessions,
-      presentCount,
+      totalPeriods,
+      presentSessions: presentCount,
+      presentPeriods,
       absentCount,
       attendancePercentage,
     })

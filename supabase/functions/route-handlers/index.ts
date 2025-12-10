@@ -277,7 +277,6 @@ Subject: ${data.subject || 'Not specified'}
 Present: ${presentCount} students (${totalPeriods} periods each)
 Absent: ${absentCount} students`
 }
-
 export async function handleAttendanceFetch(ctx: RouteHandlerContext): Promise<string> {
   const data = ctx.geminiResponse.data as { className?: string; percentage?: number; format?: string }
 
@@ -290,7 +289,13 @@ export async function handleAttendanceFetch(ctx: RouteHandlerContext): Promise<s
     .single()
 
   if (!classData) {
-    return `Class not found.`
+    // EDGE CASE: Class doesn't exist yet
+    // Return empty CSV with 0 records instead of error
+    ctx.geminiResponse.data.studentStats = []
+    ctx.geminiResponse.data.className = data.className
+    ctx.geminiResponse.data.classId = null
+    ctx.geminiResponse.data.edgeCaseReason = "class_not_found"
+    return "document"
   }
 
   // Get students with attendance
@@ -301,7 +306,13 @@ export async function handleAttendanceFetch(ctx: RouteHandlerContext): Promise<s
     .eq("faculty_id", ctx.facultyId) // CRITICAL: Filter by faculty_id
 
   if (!students || students.length === 0) {
-    return "No students found."
+    // EDGE CASE: Class exists but no students yet
+    // Return empty CSV with 0 records instead of error
+    ctx.geminiResponse.data.studentStats = []
+    ctx.geminiResponse.data.className = classData.name
+    ctx.geminiResponse.data.classId = classData.id
+    ctx.geminiResponse.data.edgeCaseReason = "no_students"
+    return "document"
   }
 
   const studentStats = []
@@ -318,20 +329,20 @@ export async function handleAttendanceFetch(ctx: RouteHandlerContext): Promise<s
       .eq("attendance_sessions.class_id", classData.id)
       .eq("attendance_sessions.faculty_id", ctx.facultyId) // CRITICAL: Filter by faculty_id
 
-    if (!records || records.length === 0) continue
-
     // Calculate total periods offered and periods attended
     let totalPeriodsOffered = 0
     let periodsAttended = 0
 
-    records.forEach((record: any) => {
-      const sessionPeriods = record.attendance_sessions?.total_periods || 1
-      totalPeriodsOffered += sessionPeriods
-      
-      if (record.is_present) {
-        periodsAttended += record.periods_present || sessionPeriods
-      }
-    })
+    if (records && records.length > 0) {
+      records.forEach((record: any) => {
+        const sessionPeriods = record.attendance_sessions?.total_periods || 1
+        totalPeriodsOffered += sessionPeriods
+        
+        if (record.is_present) {
+          periodsAttended += record.periods_present || sessionPeriods
+        }
+      })
+    }
 
     const percentage = totalPeriodsOffered > 0 
       ? Math.round((periodsAttended / totalPeriodsOffered) * 100) 
@@ -360,14 +371,68 @@ export async function handleAttendanceFetch(ctx: RouteHandlerContext): Promise<s
     }
   }
 
-  if (studentStats.length === 0) {
-    return "No students found matching the criteria."
+  // EDGE CASE: No students match the percentage criteria
+  // Instead of error, return CSV with all students (let them see who doesn't meet criteria)
+  if (studentStats.length === 0 && data.percentage !== undefined && data.percentage !== null) {
+    // Fetch all students again for the report
+    const { data: allStudents } = await ctx.supabase
+      .from("students")
+      .select("id, register_number, name")
+      .eq("class_id", classData.id)
+      .eq("faculty_id", ctx.facultyId)
+
+    const allStudentStats = []
+    for (const student of allStudents || []) {
+      const { data: records } = await ctx.supabase
+        .from("attendance_records")
+        .select(`
+          *,
+          attendance_sessions!inner(total_periods, faculty_id, class_id)
+        `)
+        .eq("student_id", student.id)
+        .eq("attendance_sessions.class_id", classData.id)
+        .eq("attendance_sessions.faculty_id", ctx.facultyId)
+
+      let totalPeriodsOffered = 0
+      let periodsAttended = 0
+
+      if (records && records.length > 0) {
+        records.forEach((record: any) => {
+          const sessionPeriods = record.attendance_sessions?.total_periods || 1
+          totalPeriodsOffered += sessionPeriods
+          
+          if (record.is_present) {
+            periodsAttended += record.periods_present || sessionPeriods
+          }
+        })
+      }
+
+      const percentage = totalPeriodsOffered > 0 
+        ? Math.round((periodsAttended / totalPeriodsOffered) * 100) 
+        : 0
+
+      allStudentStats.push({
+        registerNumber: student.register_number,
+        name: student.name,
+        percentage,
+        periodsAttended,
+        totalPeriods: totalPeriodsOffered,
+      })
+    }
+
+    allStudentStats.sort((a, b) => a.percentage - b.percentage)
+    ctx.geminiResponse.data.studentStats = allStudentStats
+    ctx.geminiResponse.data.classId = classData.id
+    ctx.geminiResponse.data.className = classData.name
+    ctx.geminiResponse.data.edgeCaseReason = "no_students_below_percentage"
+    return "document"
   }
 
   // Sort by percentage
   studentStats.sort((a, b) => a.percentage - b.percentage)
 
   // Always return "document" - always send as CSV
+
   // Store stats in context for document generation in main webhook
   ctx.geminiResponse.data.studentStats = studentStats
   ctx.geminiResponse.data.classId = classData.id
@@ -504,9 +569,6 @@ export async function handleHelp(): Promise<string> {
   - Parent WhatsApp Number (optional)
 • System auto-processes and adds all students
 
-*Add Single Student:*
-• "Add student 23B91A0738, John Doe to 3/4CSIT"
-
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 *✅ MARK ATTENDANCE*
@@ -551,23 +613,19 @@ Same prefix? Just write last digits!
 
 *📊 VIEW ATTENDANCE REPORTS*
 
-*Text Report (Quick View):*
+*Get CSV Report:*
 • "Show attendance for 3/4CSIT"
 • "Get attendance for CSE-A"
 • "Attendance report for 2/4 ECE"
 
-*File Report (Downloadable CSV):*
-• "Show attendance for 3/4CSIT as CSV"
-• "Send attendance file for CSE-A"
-• "Export attendance for 3/4CSIT"
-
 *Filtered Reports (Below X%):*
 • "Students below 75% in 3/4CSIT"
-• "Show students below 80% in CSE-A as CSV"
+• "Show students below 80% in CSE-A"
 
 *Report Format:*
-Table with columns: Roll No, Name, Periods Present, Periods Absent, Attendance %
-Includes: Total/Average at bottom
+All reports sent as CSV files with columns:
+- Roll No, Name, Periods Present, Periods Absent, Attendance %
+- Includes: Total/Average at bottom
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -586,12 +644,12 @@ Includes: Total/Average at bottom
 "Create class 3/4CSIT" → Class created
 [Send Excel file] → Students added automatically
 "08-12-2025, 9am-12pm, 3/4CSIT, OOAD, Absentees: none" → Marked
-"Show attendance for 3/4CSIT as CSV" → Report sent
+"Show attendance for 3/4CSIT" → CSV report sent
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 *Need Help?*
-Just type "help" or "/help" anytime!
+Just type "/help" anytime!
 
 System powered by AI - understands your messages naturally! 🤖✨`
 }
@@ -658,44 +716,4 @@ export async function handleCreateStudents(ctx: RouteHandlerContext): Promise<st
   return `✅ Successfully added ${inserted?.length || 0} students to class "${classData.name}"!`
 }
 
-export async function handleAddStudent(ctx: RouteHandlerContext): Promise<string> {
-  const data = ctx.geminiResponse.data as {
-    className: string
-    registerNumber: string
-    name: string
-    whatsappNumber?: string
-    parentWhatsappNumber?: string
-  }
-
-  if (!data.className || !data.registerNumber || !data.name) {
-    return "Please provide: class name, register number, and student name."
-  }
-
-  // Get class
-  const { data: classData } = await ctx.supabase
-    .from("classes")
-    .select("id, name")
-    .eq("faculty_id", ctx.facultyId)
-    .ilike("name", `%${data.className}%`)
-    .single()
-
-  if (!classData) {
-    return `Class "${data.className}" not found.`
-  }
-
-  // Insert student
-  const { error } = await ctx.supabase.from("students").insert({
-    register_number: data.registerNumber,
-    name: data.name,
-    whatsapp_number: data.whatsappNumber,
-    parent_whatsapp_number: data.parentWhatsappNumber,
-    class_id: classData.id,
-    faculty_id: ctx.facultyId, // Link student to faculty
-  })
-
-  if (error) {
-    return `Failed to add student. ${error.message}`
-  }
-
-  return `✅ Student ${data.name} (${data.registerNumber}) added to ${classData.name}!`
-}
+// handleAddStudent function removed - use bulk upload via Excel instead

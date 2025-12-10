@@ -63,38 +63,49 @@ export default async function FacultyClassDetailPage({ params }: PageProps) {
   // Get students
   const { data: students } = await adminClient.from("students").select("*").eq("class_id", id).order("register_number")
 
-  // Get all sessions for this class
-  const { data: sessions } = await adminClient.from("attendance_sessions").select("id").eq("class_id", id)
+  // Get all sessions for this class WITH total_periods
+  const { data: sessions } = await adminClient.from("attendance_sessions").select("id, total_periods").eq("class_id", id)
 
   const sessionIds = sessions?.map((s) => s.id) || []
 
-  // Calculate attendance for each student
+  // Calculate attendance for each student based on PERIODS
   const studentsWithAttendance = await Promise.all(
     (students || []).map(async (student) => {
       if (sessionIds.length === 0) {
         return { ...student, attendance: 0, attended: 0, total: 0 }
       }
 
-      const { count: total } = await adminClient
+      // Get all attendance records for this student
+      const { data: attendanceRecords } = await adminClient
         .from("attendance_records")
-        .select("*", { count: "exact", head: true })
+        .select("session_id, is_present")
         .eq("student_id", student.id)
         .in("session_id", sessionIds)
 
-      const { count: attended } = await adminClient
-        .from("attendance_records")
-        .select("*", { count: "exact", head: true })
-        .eq("student_id", student.id)
-        .in("session_id", sessionIds)
-        .eq("is_present", true)
+      // Create a map of session_id to is_present
+      const recordMap = new Map(attendanceRecords?.map(r => [r.session_id, r.is_present]) || [])
 
-      const attendance = total && total > 0 ? Math.round(((attended || 0) / total) * 100) : 0
+      // Calculate total periods and present periods
+      let totalPeriods = 0
+      let presentPeriods = 0
+
+      sessions?.forEach(session => {
+        const periods = session.total_periods || 1
+        totalPeriods += periods
+
+        const isPresent = recordMap.get(session.id) ?? false
+        if (isPresent) {
+          presentPeriods += periods
+        }
+      })
+
+      const attendance = totalPeriods > 0 ? Math.round((presentPeriods / totalPeriods) * 100) : 0
 
       return {
         ...student,
         attendance,
-        attended: attended || 0,
-        total: total || 0,
+        attended: presentPeriods,
+        total: totalPeriods,
       }
     }),
   )

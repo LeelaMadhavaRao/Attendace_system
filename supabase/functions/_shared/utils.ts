@@ -144,6 +144,56 @@ export async function parseExcelFile(buffer: ArrayBuffer): Promise<any[]> {
   }
 }
 
+async function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+async function tryGeminiCall(
+  apiKey: string,
+  model: string,
+  messages: any[],
+  retryCount: number = 0,
+): Promise<{ response: Response | null; keyIndex: number; modelName: string }> {
+  const maxRetries = 2
+  const baseDelay = 1000 // 1 second
+  
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: messages,
+          generationConfig: {
+            temperature: 0.1,
+            topK: 1,
+            topP: 1,
+            maxOutputTokens: 2048,
+          },
+        }),
+      },
+    )
+    
+    if (response.ok) {
+      return { response, keyIndex: -1, modelName: model }
+    }
+    
+    // Retry on 503 with exponential backoff
+    if ((response.status === 503 || response.status === 429) && retryCount < maxRetries) {
+      const delayMs = baseDelay * Math.pow(2, retryCount)
+      console.warn(`⚠️ ${model} returned ${response.status}, waiting ${delayMs}ms before retry...`)
+      await sleep(delayMs)
+      return tryGeminiCall(apiKey, model, messages, retryCount + 1)
+    }
+    
+    return { response, keyIndex: -1, modelName: model }
+  } catch (error) {
+    console.error(`❌ Error calling ${model}:`, error)
+    throw error
+  }
+}
+
 export async function processWithGemini(
   message: string,
   chatHistory: Array<{ role: string; content: string }>,
@@ -206,30 +256,27 @@ Response format (ALWAYS valid JSON):
    data: {"className": "string", "date": "YYYY-MM-DD", "startTime": "HH:mm", "endTime": "HH:mm", "type": "absentees|presentees", "rollNumbers": ["string"], "confirmed": false}
    First ask confirmation (confirmed: false), then edit (confirmed: true)
 
-6. "attendanceFetch" - Get attendance reports
+6. "attendanceFetch" - Get attendance reports (ALWAYS CSV format)
    Use when: "show attendance", "get attendance", "students below X%"
-   data: {"className": "string", "percentage": null or number, "format": "csv" or "excel" or null}
+   data: {"className": "string", "percentage": null or number}
    
    Percentage rules (CRITICAL):
    - NULL = Show all students (default for "show attendance", "get attendance", "attendance report")
    - NUMBER = Filter below X% (only if current message says "below X%" or "less than X%")
    - IGNORE chat history - each request is independent
    
-   Format: Set "csv" or "excel" if user says "send file", "download", "export"
+   Note: Reports are ALWAYS sent as CSV files. No text format.
 
-7. "addStudent" - Add single student
-   data: {"className": "string", "registerNumber": "string", "name": "string", "whatsappNumber": "optional", "parentWhatsappNumber": "optional"}
-
-8. "help" - Show commands
+7. "help" - Show commands (only /help is valid)
    data: {}
 
-9. "askClassName" - Request class name
+8. "askClassName" - Request class name
    data: {"pendingAction": "createClass"}
 
-10. "askStudentData" - Waiting for Excel after class creation
+9. "askStudentData" - Waiting for Excel after class creation
     data: {"classId": "string", "className": "string"}
 
-11. "clarify" - Need more info
+10. "clarify" - Need more info
     data: {"question": "specific question"}
 
 🔧 PARSING:
@@ -292,76 +339,69 @@ ALWAYS return valid JSON with route, message, and data fields.`
       },
     ]
 
-    // FALLBACK STRATEGY: Try 2.5-flash with all 5 API keys, then 2.0-flash with all 5 API keys
+    // FALLBACK STRATEGY: Try 2.5-flash with all 5 API keys (with backoff), then 2.0-flash with all 5 API keys
     
     let response: Response | null = null
     let successfulKey = 0
     let successfulModel = ""
     
     // Phase 1: Try gemini-2.5-flash with all API keys
+    console.log("📡 Attempting gemini-2.5-flash with all API keys...")
     for (let i = 0; i < allApiKeys.length; i++) {
       const apiKey = allApiKeys[i]
+      console.log(`  [Key ${i + 1}/${allApiKeys.length}]`)
       
-      response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: messages,
-            generationConfig: {
-              temperature: 0.1,
-              topK: 1,
-              topP: 1,
-              maxOutputTokens: 2048,
-            },
-          }),
-        },
-      )
-      
-      if (response.ok) {
-        successfulKey = i + 1
-        successfulModel = "2.5-flash"
-        console.log(`✅ Gemini ${successfulModel} [Key ${successfulKey}]`)
-        break
-      } else if (response.status !== 429 && response.status !== 404) {
-        console.error(`❌ Gemini 2.5-flash error: ${response.status}`)
-        break
+      try {
+        const result = await tryGeminiCall(apiKey, "gemini-2.5-flash", messages)
+        response = result.response
+        
+        if (response && response.ok) {
+          successfulKey = i + 1
+          successfulModel = "2.5-flash"
+          console.log(`✅ Gemini ${successfulModel} [Key ${successfulKey}]`)
+          break
+        } else if (response && (response.status === 429 || response.status === 503)) {
+          console.warn(`⚠️ Key ${i + 1}: Status ${response.status}, continuing to next key...`)
+          response = null
+          continue
+        } else if (response) {
+          console.error(`❌ Key ${i + 1}: Status ${response.status}, stopping phase 1`)
+          break
+        }
+      } catch (error) {
+        console.error(`❌ Key ${i + 1}: Unexpected error:`, error)
+        continue
       }
     }
     
     // Phase 2: If all 2.5-flash attempts failed, try 2.0-flash with all API keys
-    if (!response || (!response.ok && (response.status === 429 || response.status === 404))) {
-      console.log("⚠️ Switching to 2.0-flash fallback")
+    if (!response || !response.ok) {
+      console.log("⚠️ Switching to gemini-2.0-flash fallback...")
       
       for (let i = 0; i < allApiKeys.length; i++) {
         const apiKey = allApiKeys[i]
+        console.log(`  [Key ${i + 1}/${allApiKeys.length}]`)
         
-        response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: messages,
-              generationConfig: {
-                temperature: 0.1,
-                topK: 1,
-                topP: 1,
-                maxOutputTokens: 2048,
-              },
-            }),
-          },
-        )
-        
-        if (response.ok) {
-          successfulKey = i + 1
-          successfulModel = "2.0-flash"
-          console.log(`✅ Gemini ${successfulModel} [Key ${successfulKey}]`)
-          break
-        } else if (response.status !== 429 && response.status !== 404) {
-          console.error(`❌ Gemini 2.0-flash error: ${response.status}`)
-          break
+        try {
+          const result = await tryGeminiCall(apiKey, "gemini-2.0-flash", messages)
+          response = result.response
+          
+          if (response && response.ok) {
+            successfulKey = i + 1
+            successfulModel = "2.0-flash"
+            console.log(`✅ Gemini ${successfulModel} [Key ${successfulKey}]`)
+            break
+          } else if (response && (response.status === 429 || response.status === 503)) {
+            console.warn(`⚠️ Key ${i + 1}: Status ${response.status}, continuing to next key...`)
+            response = null
+            continue
+          } else if (response) {
+            console.error(`❌ Key ${i + 1}: Status ${response.status}, stopping phase 2`)
+            break
+          }
+        } catch (error) {
+          console.error(`❌ Key ${i + 1}: Unexpected error:`, error)
+          continue
         }
       }
     }
@@ -412,6 +452,7 @@ export function generateAttendanceCSV(
     periodsAttended: number
     totalPeriods: number
   }>,
+  edgeCaseReason?: string,
 ): string {
   const headers = ["Register Number", "Name", "Attendance %", "Periods Attended", "Total Periods"]
   
@@ -438,19 +479,82 @@ export function generateAttendanceCSV(
     return row.join(" | ")
   })
 
-  const csvContent = [
-    `Attendance Report - ${className}`,
-    `Generated on: ${new Date().toLocaleString()}`,
-    ``,
-    headerRow,
-    separator,
-    ...dataRows,
-    separator,
-    `Total Students: ${studentStats.length}`,
-    `Average Attendance: ${Math.round(studentStats.reduce((sum, s) => sum + s.percentage, 0) / studentStats.length)}%`,
-  ].join("\n")
+  // Handle edge cases
+  let csvContent: string[]
+  
+  if (studentStats.length === 0 && edgeCaseReason === "class_not_found") {
+    csvContent = [
+      `Attendance Report - ${className}`,
+      `Generated on: ${new Date().toLocaleString()}`,
+      `STATUS: Class not created yet`,
+      ``,
+      `ℹ️  No attendance data available for "${className}"`,
+      ``,
+      `Next Steps:`,
+      `1. Create the class first`,
+      `2. Upload student list (Excel file)`,
+      `3. Mark attendance for at least one session`,
+      ``,
+      `Once you complete these steps, you can generate attendance reports.`,
+    ]
+  } else if (studentStats.length === 0 && edgeCaseReason === "no_students") {
+    csvContent = [
+      `Attendance Report - ${className}`,
+      `Generated on: ${new Date().toLocaleString()}`,
+      `STATUS: No students enrolled`,
+      ``,
+      `ℹ️  Class "${className}" exists but has no students.`,
+      ``,
+      `Next Steps:`,
+      `1. Upload student list (Excel file) with student data`,
+      `2. Then mark attendance for this class`,
+      ``,
+      `Once students are added, attendance reports will be available.`,
+    ]
+  } else if (studentStats.length === 0 && edgeCaseReason === "no_students_below_percentage") {
+    csvContent = [
+      `Attendance Report - ${className}`,
+      `Generated on: ${new Date().toLocaleString()}`,
+      `STATUS: No students below specified percentage`,
+      ``,
+      `All students in ${className} have attendance above the threshold.`,
+      ``,
+      headerRow,
+      separator,
+      ...dataRows,
+      separator,
+      `Total Students: ${studentStats.length}`,
+      `Note: No students found below the specified percentage threshold.`,
+    ]
+  } else if (studentStats.length === 0) {
+    csvContent = [
+      `Attendance Report - ${className}`,
+      `Generated on: ${new Date().toLocaleString()}`,
+      `STATUS: No attendance data recorded`,
+      ``,
+      `ℹ️  No attendance sessions have been marked for "${className}" yet.`,
+      ``,
+      `Next Steps:`,
+      `1. Mark attendance for this class`,
+      `2. Record at least one attendance session`,
+      `3. Try generating the report again`,
+    ]
+  } else {
+    // Normal case with data
+    csvContent = [
+      `Attendance Report - ${className}`,
+      `Generated on: ${new Date().toLocaleString()}`,
+      ``,
+      headerRow,
+      separator,
+      ...dataRows,
+      separator,
+      `Total Students: ${studentStats.length}`,
+      `Average Attendance: ${Math.round(studentStats.reduce((sum, s) => sum + s.percentage, 0) / studentStats.length)}%`,
+    ]
+  }
 
-  return csvContent
+  return csvContent.join("\n")
 }
 
 // Upload file to Supabase storage and return public URL
