@@ -9,6 +9,9 @@
     "lint": "eslint .",
     "seed:admin": "node scripts/seed_admin.js"
   },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
     "@radix-ui/react-accordion": "1.2.2",
