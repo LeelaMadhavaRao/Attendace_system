@@ -43,7 +43,6 @@ const navItemsByRole: Record<UserRole, NavItem[]> = {
     { title: "Faculty", href: "/admin/faculty", icon: GraduationCap },
     { title: "All Classes", href: "/admin/classes", icon: School },
     { title: "Attendance Reports", href: "/admin/reports", icon: BarChart3 },
-    { title: "Settings", href: "/admin/settings", icon: Settings },
   ],
   hod: [
     { title: "Dashboard", href: "/hod", icon: LayoutDashboard },

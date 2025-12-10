@@ -50,17 +50,7 @@ export default async function HODClassDetailPage({ params }: PageProps) {
   // Get class details
   const { data: classData } = await adminClient
     .from("classes")
-    .select(
-      `
-      *,
-      faculty:faculty(
-        id,
-        profile:profiles(name),
-        department,
-        hod_id
-      )
-    `,
-    )
+    .select("*")
     .eq("id", id)
     .single()
 
@@ -68,12 +58,47 @@ export default async function HODClassDetailPage({ params }: PageProps) {
     notFound()
   }
 
-  // Verify HOD has access to this class
-  const { data: hod } = await supabase.from("hods").select("id").eq("profile_id", user.id).single()
+  // Get faculty details
+  const { data: faculty } = await adminClient
+    .from("faculty")
+    .select("id, profile_id, department, hod_id")
+    .eq("id", classData.faculty_id)
+    .single()
 
-  if (classData.faculty?.hod_id !== hod?.id) {
+  // Get faculty profile name
+  let facultyName = "Unknown"
+  if (faculty?.profile_id) {
+    const { data: profile } = await adminClient
+      .from("profiles")
+      .select("name")
+      .eq("id", faculty.profile_id)
+      .single()
+    
+    if (profile) {
+      facultyName = profile.name
+    }
+  }
+
+  // Attach faculty data to classData for template consistency
+  const classDataWithFaculty = {
+    ...classData,
+    faculty: {
+      id: faculty?.id,
+      profile: { name: facultyName },
+      department: faculty?.department,
+      hod_id: faculty?.hod_id,
+    },
+  }
+
+  // Verify HOD has access to this class
+  const { data: hod } = await supabase.from("hods").select("id").eq("profile_id", hodProfile.id).single()
+
+  if (faculty?.hod_id !== hod?.id) {
+    console.log("[HOD/CLASSES/[ID]] Access denied - faculty hod_id:", faculty?.hod_id, "current hod id:", hod?.id)
     redirect("/hod/classes")
   }
+
+  console.log("[HOD/CLASSES/[ID]] Access granted - Faculty:", facultyName, "Class:", classData.name)
 
   // Get students with attendance
   const { data: students } = await adminClient.from("students").select("*").eq("class_id", id).order("name")
@@ -125,15 +150,15 @@ export default async function HODClassDetailPage({ params }: PageProps) {
 
   return (
     <>
-      <Header title={`Class: ${classData.name}`} />
+      <Header title={`Class: ${classDataWithFaculty.name}`} />
       <div className="p-6 space-y-6">
         {/* Class Info */}
         <Card>
           <CardContent className="p-6">
             <div className="flex flex-wrap items-center gap-4">
               <div className="flex-1 min-w-[200px]">
-                <h2 className="text-xl font-semibold">{classData.name}</h2>
-                <p className="text-muted-foreground">Faculty: {classData.faculty?.profile?.name}</p>
+                <h2 className="text-xl font-semibold">{classDataWithFaculty.name}</h2>
+                <p className="text-muted-foreground">Faculty: {classDataWithFaculty.faculty?.profile?.name}</p>
               </div>
               <div className="flex items-center gap-6">
                 <div className="text-center">

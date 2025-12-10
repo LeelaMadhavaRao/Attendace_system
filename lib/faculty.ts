@@ -6,8 +6,6 @@ import { revalidatePath } from "next/cache"
 
 export interface CreateClassInput {
   name: string
-  semester?: string
-  academicYear?: string
   department?: string
 }
 
@@ -66,8 +64,6 @@ export async function createClass(input: CreateClassInput) {
       name: input.name,
       faculty_id: faculty.id,
       department: input.department || faculty.department,
-      semester: input.semester,
-      academic_year: input.academicYear,
     })
     .select()
     .single()
@@ -92,6 +88,18 @@ export async function createStudent(input: CreateStudentInput) {
 
   const adminClient = createAdminClient()
 
+  // Get class details for username
+  const { data: classData } = await adminClient
+    .from("classes")
+    .select("name")
+    .eq("id", input.classId)
+    .single()
+
+  if (!classData) {
+    return { error: "Class not found" }
+  }
+
+  // Create student record first
   const { data, error } = await adminClient
     .from("students")
     .insert({
@@ -108,8 +116,44 @@ export async function createStudent(input: CreateStudentInput) {
     return { error: error.message }
   }
 
+  // Create auth account with username as [RegisterNumber-ClassName] and password as [RegisterNumber]
+  const username = `${input.registerNumber}-${classData.name}`
+  const password = input.registerNumber
+
+  try {
+    const { data: authData, error: authError } = await adminClient.auth.admin.createUser({
+      email: `${username.toLowerCase().replace(/[^a-z0-9-]/g, "")}@student.local`,
+      password: password,
+      email_confirm: true,
+      user_metadata: {
+        name: input.name,
+        role: "student",
+        register_number: input.registerNumber,
+        class_id: input.classId,
+        username: username,
+      },
+    })
+
+    if (authError) {
+      console.error("[CREATE_STUDENT] Auth account creation failed:", authError.message)
+      // Continue anyway - student record is created
+    } else {
+      // Create profile
+      await adminClient.from("profiles").insert({
+        id: authData.user.id,
+        email: authData.user.email,
+        name: input.name,
+        role: "student",
+      })
+
+      console.log(`[CREATE_STUDENT] Created auth account - Username: ${username}, Password: ${password}`)
+    }
+  } catch (err) {
+    console.error("[CREATE_STUDENT] Exception creating auth account:", err)
+  }
+
   revalidatePath(`/faculty/classes/${input.classId}`)
-  return { success: true, data }
+  return { success: true, data, credentials: { username, password } }
 }
 
 export async function createStudentsBulk(students: CreateStudentInput[]) {
@@ -124,6 +168,21 @@ export async function createStudentsBulk(students: CreateStudentInput[]) {
 
   const adminClient = createAdminClient()
 
+  // Get class details for username
+  let className = ""
+  if (students.length > 0) {
+    const { data: classData } = await adminClient
+      .from("classes")
+      .select("name")
+      .eq("id", students[0].classId)
+      .single()
+    
+    if (classData) {
+      className = classData.name
+    }
+  }
+
+  // Create student records first
   const { data, error } = await adminClient
     .from("students")
     .insert(
@@ -141,10 +200,51 @@ export async function createStudentsBulk(students: CreateStudentInput[]) {
     return { error: error.message }
   }
 
+  // Create auth accounts for each student
+  const credentials: Array<{ username: string; password: string; name: string }> = []
+  
+  for (const student of students) {
+    const username = `${student.registerNumber}-${className}`
+    const password = student.registerNumber
+
+    try {
+      const { data: authData, error: authError } = await adminClient.auth.admin.createUser({
+        email: `${username.toLowerCase().replace(/[^a-z0-9-]/g, "")}@student.local`,
+        password: password,
+        email_confirm: true,
+        user_metadata: {
+          name: student.name,
+          role: "student",
+          register_number: student.registerNumber,
+          class_id: student.classId,
+          username: username,
+        },
+      })
+
+      if (authError) {
+        console.error(`[CREATE_STUDENTS_BULK] Auth failed for ${student.registerNumber}:`, authError.message)
+      } else {
+        // Create profile
+        await adminClient.from("profiles").insert({
+          id: authData.user.id,
+          email: authData.user.email,
+          name: student.name,
+          role: "student",
+        })
+
+        credentials.push({ username, password, name: student.name })
+        console.log(`[CREATE_STUDENTS_BULK] Created account - Username: ${username}, Password: ${password}`)
+      }
+    } catch (err) {
+      console.error(`[CREATE_STUDENTS_BULK] Exception for ${student.registerNumber}:`, err)
+    }
+  }
+
   if (students.length > 0) {
     revalidatePath(`/faculty/classes/${students[0].classId}`)
   }
-  return { success: true, count: data.length }
+  
+  return { success: true, count: data.length, credentials }
 }
 
 export async function createSubject(input: CreateSubjectInput) {

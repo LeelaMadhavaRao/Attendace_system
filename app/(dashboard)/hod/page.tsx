@@ -71,15 +71,25 @@ export default async function HODDashboard() {
         .in("class_id", classIds)
       studentCount = students || 0
 
-      // Get attendance statistics
-      const { data: attendanceData } = await supabase
-        .from("attendance")
-        .select("student_id")
-        .in("class_id", classIds)
-        .eq("status", "present")
+      // Get attendance sessions for these classes
+      const { data: sessionsList } = await supabase
+        .from("attendance_sessions")
+        .select("id")
+        .in("faculty_id", facultyIds)
+      
+      if (sessionsList && sessionsList.length > 0) {
+        const sessionIds = sessionsList.map(s => s.id)
+        
+        // Get all attendance records for these sessions
+        const { data: allRecords } = await supabase
+          .from("attendance_records")
+          .select("is_present")
+          .in("session_id", sessionIds)
 
-      if (studentCount > 0 && attendanceData) {
-        totalAttendancePercentage = Math.round((attendanceData.length / (studentCount * 10)) * 100) // Assuming 10 classes per student
+        if (allRecords && allRecords.length > 0) {
+          const presentCount = allRecords.filter(r => r.is_present).length
+          totalAttendancePercentage = Math.round((presentCount / allRecords.length) * 100)
+        }
       }
 
       // Get low attendance students (below 75%)
@@ -88,23 +98,21 @@ export default async function HODDashboard() {
         .select("id")
         .in("class_id", classIds)
 
-      if (studentsData) {
+      if (studentsData && studentsData.length > 0) {
         for (const student of studentsData) {
-          const { count: presentCount } = await supabase
-            .from("attendance")
-            .select("*", { count: "exact", head: true })
+          // Get attendance records for this student
+          const { data: studentRecords } = await supabase
+            .from("attendance_records")
+            .select("is_present")
             .eq("student_id", student.id)
-            .eq("status", "present")
-            .in("class_id", classIds)
 
-          const { count: totalCount } = await supabase
-            .from("attendance")
-            .select("*", { count: "exact", head: true })
-            .eq("student_id", student.id)
-            .in("class_id", classIds)
+          if (studentRecords && studentRecords.length > 0) {
+            const presentCount = studentRecords.filter(r => r.is_present).length
+            const attendancePercentage = (presentCount / studentRecords.length) * 100
 
-          if (totalCount && presentCount && (presentCount / totalCount) * 100 < 75) {
-            lowAttendanceCount++
+            if (attendancePercentage < 75) {
+              lowAttendanceCount++
+            }
           }
         }
       }

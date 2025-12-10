@@ -29,7 +29,7 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  // Protected routes that require authentication
+  // Protected routes that require Supabase authentication (not including /student which uses localStorage)
   const protectedRoutes = ["/dashboard", "/admin", "/hod", "/faculty"]
   const isProtectedRoute = protectedRoutes.some((route) => request.nextUrl.pathname.startsWith(route))
 

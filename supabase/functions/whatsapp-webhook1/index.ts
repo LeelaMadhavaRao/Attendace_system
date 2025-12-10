@@ -1,4 +1,4 @@
-import { createSupabaseClient, sendWhatsAppMessage, sendWhatsAppTemplate, downloadWhatsAppMedia, processWithGemini, parseExcelFile, generateAttendanceCSV, uploadAttendanceReport, sendWhatsAppDocument, sendWhatsAppCSVAsDocument, cleanupOldReports, generateUniqueFileName } from "../_shared/utils.ts"
+import { createSupabaseClient, sendWhatsAppMessage, downloadWhatsAppMedia, processWithGemini, parseExcelFile, generateAttendanceCSV, uploadAttendanceReport, sendWhatsAppDocument, sendWhatsAppCSVAsDocument, cleanupOldReports, generateUniqueFileName } from "../_shared/utils.ts"
 import {
   handleCreateClass,
   handleAssignAttendance,
@@ -6,7 +6,6 @@ import {
   handleHelp,
   handleCreateStudents,
   handleAddStudent,
-  handleParentMessage,
   handleEditAttendance
 } from "../route-handlers/index.ts"
 
@@ -384,22 +383,6 @@ Deno.serve(async (req) => {
 
           case "editAttendance":
             responseMessage = await handleEditAttendance(routeContext)
-            break
-
-          case "parentMessage":
-            responseMessage = await handleParentMessage(routeContext, {
-              sendMessage: async (params: { to: string; message: string }) => {
-                return await sendWhatsAppMessage(params, accessToken, phoneNumberId)
-              },
-              sendTemplate: async (params: { 
-                to: string
-                templateName: string
-                languageCode?: string
-                parameters: Array<{ type: string; text: string }>
-              }) => {
-                return await sendWhatsAppTemplate(params, accessToken, phoneNumberId)
-              },
-            })
             break
 
           default:

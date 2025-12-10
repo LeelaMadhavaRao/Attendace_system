@@ -51,6 +51,7 @@ export default async function FacultyDashboard() {
   let classCount = 0
   let studentCount = 0
   let sessionCount = 0
+  let avgAttendance = 0
 
   if (faculty) {
     const { count: classes } = await supabase
@@ -75,6 +76,25 @@ export default async function FacultyDashboard() {
       .select("*", { count: "exact", head: true })
       .eq("faculty_id", faculty.id)
     sessionCount = sessions || 0
+
+    // Calculate average attendance dynamically
+    if (classIds.length > 0 && studentCount > 0) {
+      const { data: allRecords } = await supabase
+        .from("attendance_records")
+        .select("is_present")
+        .in("session_id", 
+          (await supabase
+            .from("attendance_sessions")
+            .select("id")
+            .eq("faculty_id", faculty.id))
+          .data?.map(s => s.id) || []
+        )
+
+      if (allRecords && allRecords.length > 0) {
+        const presentCount = allRecords.filter(r => r.is_present).length
+        avgAttendance = Math.round((presentCount / allRecords.length) * 100)
+      }
+    }
   }
 
   return (
@@ -116,10 +136,10 @@ export default async function FacultyDashboard() {
           />
           <StatsCard
             title="Avg Attendance"
-            value="87%"
+            value={`${avgAttendance}%`}
             description="Across all classes"
             icon={TrendingUp}
-            trend={{ value: 3, isPositive: true }}
+            trend={{ value: avgAttendance >= 75 ? 1 : -1, isPositive: avgAttendance >= 75 }}
           />
         </div>
 
@@ -154,8 +174,8 @@ export default async function FacultyDashboard() {
                   <ClipboardList className="h-5 w-5 text-primary" />
                 </div>
                 <div>
-                  <p className="font-medium">Mark Attendance</p>
-                  <p className="text-sm text-muted-foreground">Record attendance via web</p>
+                  <p className="font-medium">Attendance History</p>
+                  <p className="text-sm text-muted-foreground">View the Attendance History</p>
                 </div>
               </a>
             </CardContent>
@@ -171,16 +191,16 @@ export default async function FacultyDashboard() {
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="rounded-lg bg-muted p-3">
-                <code className="text-sm">/help</code>
-                <p className="text-xs text-muted-foreground mt-1">Show all available commands</p>
-              </div>
-              <div className="rounded-lg bg-muted p-3">
-                <code className="text-sm">/createclass</code>
+                <code className="text-sm">I want to create a class</code>
                 <p className="text-xs text-muted-foreground mt-1">Start creating a new class</p>
               </div>
               <div className="rounded-lg bg-muted p-3">
-                <code className="text-sm">/attendance</code>
-                <p className="text-xs text-muted-foreground mt-1">Quick attendance marking</p>
+                <code className="text-sm">DD-MM-YYYY, time, class, subject, Absentees: 1,2,3</code>
+                <p className="text-xs text-muted-foreground mt-1">Mark attendance with absentees</p>
+              </div>
+              <div className="rounded-lg bg-muted p-3">
+                <code className="text-sm">Students below 75% in [class]</code>
+                <p className="text-xs text-muted-foreground mt-1">Get low attendance students</p>
               </div>
               <a href="/faculty/commands" className="text-sm text-primary hover:underline block text-center mt-2">
                 View all commands →

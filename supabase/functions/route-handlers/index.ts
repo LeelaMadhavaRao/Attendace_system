@@ -66,6 +66,20 @@ export async function handleCreateClass(ctx: RouteHandlerContext): Promise<strin
     return "Please provide a class name to create."
   }
 
+  // Get faculty's department
+  const { data: facultyData } = await ctx.supabase
+    .from("faculty")
+    .select("department")
+    .eq("id", ctx.facultyId)
+    .single()
+
+  if (!facultyData) {
+    console.error("Faculty not found:", ctx.facultyId)
+    return "Failed to create class. Faculty record not found."
+  }
+
+  const departmentName = facultyData.department
+
   // Check if class already exists
   const { data: existing } = await ctx.supabase
     .from("classes")
@@ -78,12 +92,11 @@ export async function handleCreateClass(ctx: RouteHandlerContext): Promise<strin
     return `A class named "${data.className}" already exists.`
   }
 
-  // Create the class
+  // Create the class with department assigned
   const { error } = await ctx.supabase.from("classes").insert({
     name: data.className,
     faculty_id: ctx.facultyId,
-    semester: data.semester,
-    academic_year: data.academicYear,
+    department: departmentName,
   })
 
   if (error) {
@@ -91,7 +104,7 @@ export async function handleCreateClass(ctx: RouteHandlerContext): Promise<strin
     return "Failed to create class. Please try again."
   }
 
-  return `Class "${data.className}" created successfully!\n\nNow please send an Excel file with student data.\n\nRequired columns:\n- Register Number\n- Name\n- WhatsApp (optional)\n- Parent WhatsApp (optional)`
+  return `Class "${data.className}" created successfully in department: ${departmentName}!\n\nNow please send an Excel file with student data.\n\nRequired columns:\n- Register Number\n- Name\n- WhatsApp (optional)\n- Parent WhatsApp (optional)`
 }
 
 export async function handleAssignAttendance(ctx: RouteHandlerContext): Promise<string> {
@@ -558,26 +571,6 @@ Includes: Total/Average at bottom
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-*📨 PARENT NOTIFICATIONS*
-
-*All Classes:*
-• "Send message to parents of 75% below"
-• "Notify parents below 80% in all classes"
-(Sends to ALL your classes)
-
-*Specific Class:*
-• "Send message to parents of 75% below in 3/4CSIT"
-• "Message parents below 70% in CSE-A"
-
-*Message Content:*
-Auto-includes:
-- Student name & roll number
-- Class name
-- Attendance percentage
-- Sessions attended/total
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 *💡 TIPS & FEATURES*
 
 ✓ Natural Language: Talk normally!
@@ -705,237 +698,4 @@ export async function handleAddStudent(ctx: RouteHandlerContext): Promise<string
   }
 
   return `✅ Student ${data.name} (${data.registerNumber}) added to ${classData.name}!`
-}
-
-export async function handleParentMessage(
-  ctx: RouteHandlerContext,
-  whatsappConfig: {
-    sendMessage: (params: { to: string; message: string }) => Promise<any>
-    sendTemplate?: (params: { 
-      to: string
-      templateName: string
-      languageCode?: string
-      parameters: Array<{ type: string; text: string }>
-    }) => Promise<any>
-  },
-): Promise<string> {
-  const data = ctx.geminiResponse.data as {
-    className?: string | null
-    percentage?: number
-    message?: string
-    allClasses?: boolean
-  }
-
-  const threshold = data.percentage || 75
-  let classesToProcess: Array<{ id: string; name: string }> = []
-
-  // Determine which classes to process
-  if (data.allClasses || !data.className) {
-    // Send to all classes handled by this faculty
-    const { data: classes, error } = await ctx.supabase
-      .from("classes")
-      .select("id, name")
-      .eq("faculty_id", ctx.facultyId)
-
-    if (error || !classes || classes.length === 0) {
-      return "No classes found for your account."
-    }
-
-    classesToProcess = classes
-  } else {
-    // Send to specific class
-    const { data: classData } = await ctx.supabase
-      .from("classes")
-      .select("id, name")
-      .eq("faculty_id", ctx.facultyId)
-      .ilike("name", `%${data.className}%`)
-      .single()
-
-    if (!classData) {
-      return `Class "${data.className}" not found.`
-    }
-
-    classesToProcess = [classData]
-  }
-
-  console.log("📤 Processing", classesToProcess.length, "class(es)")
-
-  let totalSentCount = 0
-  let totalLowAttendanceStudents = 0
-  const classResults: string[] = []
-
-  // Process each class
-  for (const classData of classesToProcess) {
-
-    // Get students with attendance below threshold
-    const { data: sessions } = await ctx.supabase
-      .from("attendance_sessions")
-      .select("id")
-      .eq("class_id", classData.id)
-      .eq("faculty_id", ctx.facultyId) // CRITICAL: Filter by faculty_id
-
-    const sessionIds = sessions?.map((s: any) => s.id) || []
-
-    if (sessionIds.length === 0) {
-      continue
-    }
-
-    const { data: students } = await ctx.supabase
-      .from("students")
-      .select("id, register_number, name, parent_whatsapp_number")
-      .eq("class_id", classData.id)
-      .eq("faculty_id", ctx.facultyId)
-
-    if (!students || students.length === 0) {
-      continue
-    }
-
-    const lowAttendanceStudents = []
-
-    for (const student of students) {
-      if (!student.parent_whatsapp_number) continue
-
-      const { count: total } = await ctx.supabase
-        .from("attendance_records")
-        .select("*", { count: "exact", head: true })
-        .eq("student_id", student.id)
-        .in("session_id", sessionIds)
-
-      const { count: present } = await ctx.supabase
-        .from("attendance_records")
-        .select("*", { count: "exact", head: true })
-        .eq("student_id", student.id)
-        .eq("is_present", true)
-        .in("session_id", sessionIds)
-
-      const percentage = total && total > 0 ? Math.round(((present || 0) / total) * 100) : 0
-
-      if (percentage < threshold) {
-        lowAttendanceStudents.push({
-          ...student,
-          percentage,
-          attended: present || 0,
-          total: total || 0,
-        })
-      }
-    }
-
-    if (lowAttendanceStudents.length === 0) {
-      continue
-    }
-
-    // Send messages to parents
-    let sentCount = 0
-    let failedCount = 0
-    let windowExpiredCount = 0
-    const defaultMessage =
-      data.message ||
-      `Dear Parent,\n\nThis is to inform you that your child's attendance is below ${threshold}%.\n\nPlease ensure regular attendance.\n\nThank you.`
-
-    for (const student of lowAttendanceStudents) {
-      const personalizedMessage = `${defaultMessage}\n\nClass: ${classData.name}\nStudent: ${student.name} (${student.register_number})\nAttendance: ${student.percentage}% (${student.attended}/${student.total})`
-
-      try {
-        // Try template message first (works beyond 24-hour window)
-        if (whatsappConfig.sendTemplate) {
-          try {
-            const templateName = Deno.env.get("WHATSAPP_TEMPLATE_NAME") || "low_attendance_alert"
-            
-            await whatsappConfig.sendTemplate({
-              to: student.parent_whatsapp_number,
-              templateName: templateName,
-              languageCode: "en",
-              parameters: [
-                { type: "text", text: student.name },
-                { type: "text", text: student.register_number },
-                { type: "text", text: classData.name },
-                { type: "text", text: student.percentage.toString() },
-                { type: "text", text: `${student.attended}/${student.total}` }
-              ]
-            })
-            
-          } catch (templateError: any) {
-            // Fallback to regular message (within 24-hour window)
-            await whatsappConfig.sendMessage({
-              to: student.parent_whatsapp_number,
-              message: personalizedMessage,
-            })
-          }
-        } else {
-          // No template support, use regular message
-          await whatsappConfig.sendMessage({
-            to: student.parent_whatsapp_number,
-            message: personalizedMessage,
-          })
-        }
-
-        // Log parent message
-        await ctx.supabase.from("parent_messages").insert({
-          student_id: student.id,
-          parent_phone: student.parent_whatsapp_number,
-          message: personalizedMessage,
-          status: "sent",
-        })
-
-        sentCount++
-      } catch (error: any) {
-        console.error(`Failed to send message to parent of ${student.name}:`, error)
-        
-        // Check if it's a 24-hour window error
-        const errorMessage = error?.message || JSON.stringify(error)
-        if (errorMessage.includes("131047") || errorMessage.includes("24 hours") || errorMessage.includes("Re-engagement")) {
-          windowExpiredCount++
-          
-          // Log as window_expired
-          await ctx.supabase.from("parent_messages").insert({
-            student_id: student.id,
-            parent_phone: student.parent_whatsapp_number,
-            message: personalizedMessage,
-            status: "window_expired",
-          })
-        } else {
-          failedCount++
-          
-          // Log as failed
-          await ctx.supabase.from("parent_messages").insert({
-            student_id: student.id,
-            parent_phone: student.parent_whatsapp_number,
-            message: personalizedMessage,
-            status: "failed",
-          })
-        }
-      }
-    }
-
-    totalSentCount += sentCount
-    totalLowAttendanceStudents += lowAttendanceStudents.length
-    
-    let classResult = `${classData.name}: ${sentCount}/${lowAttendanceStudents.length} sent`
-    if (windowExpiredCount > 0) {
-      classResult += ` (${windowExpiredCount} 24hr window expired)`
-    }
-    if (failedCount > 0) {
-      classResult += ` (${failedCount} failed)`
-    }
-    classResults.push(classResult)
-  }
-
-  if (totalSentCount === 0) {
-    return `No students found with attendance below ${threshold}% in the specified ${classesToProcess.length > 1 ? 'classes' : 'class'}.`
-  }
-
-  let resultMessage = `✅ Messages sent to ${totalSentCount} parent(s) out of ${totalLowAttendanceStudents} students with attendance below ${threshold}%.\n\n`
-  
-  if (classesToProcess.length > 1) {
-    resultMessage += `Classes processed: ${classesToProcess.length}\n\nBreakdown:\n${classResults.join('\n')}`
-  } else {
-    resultMessage += `Class: ${classesToProcess[0].name}\n${classResults[0].split(': ')[1]}`
-  }
-  
-  // Add note about 24-hour window if applicable
-  if (classResults.some(r => r.includes('24hr window expired'))) {
-    resultMessage += `\n\n⚠️ Note: Some messages failed due to WhatsApp's 24-hour messaging window. Parents need to message you first, or you can use Message Templates.`
-  }
-
-  return resultMessage
 }

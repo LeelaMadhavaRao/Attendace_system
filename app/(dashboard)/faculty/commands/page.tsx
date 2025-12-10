@@ -19,18 +19,7 @@ const commands = [
     category: "Class Management",
     icon: BookOpen,
     items: [
-      { command: "/createclass", description: "Start the class creation wizard" },
       { command: "I want to create a class", description: "Natural language to create a class" },
-      { command: "/myclasses", description: "List all your classes" },
-    ],
-  },
-  {
-    category: "Student Management",
-    icon: Users,
-    items: [
-      { command: "[Send Excel File]", description: "Upload student list after class creation" },
-      { command: "/addstudent", description: "Add a single student to a class" },
-      { command: "/students [class]", description: "List all students in a class" },
     ],
   },
   {
@@ -45,27 +34,13 @@ const commands = [
         command: "06-12-2025, 9.00am - 12.00pm, 3/4 CSIT, OOAD, Presentees: 1,2,3",
         description: "Mark attendance with presentees list",
       },
-      { command: "/attendance [class]", description: "Get attendance summary for a class" },
     ],
   },
   {
     category: "Reports",
     icon: FileText,
     items: [
-      { command: "Get attendance of 3/4 CSIT", description: "Fetch complete attendance data" },
       { command: "Students below 75% in 3/4 CSIT", description: "Get low attendance students" },
-      { command: "/report [class]", description: "Generate detailed attendance report" },
-    ],
-  },
-  {
-    category: "Parent Communication",
-    icon: Bell,
-    items: [
-      {
-        command: "Send message to parents of students with 75% below in 3/4 CSIT",
-        description: "Notify parents of low attendance students",
-      },
-      { command: "/notifyparents [class] [percentage]", description: "Bulk notify parents below threshold" },
     ],
   },
 ]

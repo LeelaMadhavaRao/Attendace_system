@@ -1,17 +1,40 @@
 import type React from "react"
 import { redirect } from "next/navigation"
+import { headers } from "next/headers"
 import { createClient } from "@/lib/server"
 import { Sidebar } from "@/components/sidebar"
 import type { UserRole } from "@/lib/database"
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
+  
+  // Get the current pathname to determine intended role
+  const headersList = await headers()
+  const pathname = headersList.get("x-pathname") || ""
+  
+  // Students use localStorage auth, not Supabase auth - skip auth check for /student route
+  if (pathname === "/student") {
+    return children
+  }
+  
   const {
     data: { user },
   } = await supabase.auth.getUser()
 
   if (!user) {
     redirect("/login")
+  }
+  
+  // Extract intended role from URL path
+  let intendedRole: UserRole | null = null
+  if (pathname.includes("/admin")) {
+    intendedRole = "admin"
+  } else if (pathname.includes("/hod")) {
+    intendedRole = "hod"
+  } else if (pathname.includes("/faculty")) {
+    intendedRole = "faculty"
+  } else if (pathname.includes("/student")) {
+    intendedRole = "student"
   }
 
   // Find all profiles for this email
@@ -25,11 +48,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
   }
 
   console.log("[LAYOUT] User profiles found:", profiles.map(p => ({ id: p.id, email: p.email, role: p.role })))
+  console.log("[LAYOUT] Intended role from URL:", intendedRole)
 
   const profileIds = profiles.map(p => p.id)
   console.log("[LAYOUT] Profile IDs:", profileIds)
 
-  // Detect which roles are available for this user
+  // Check which roles are available for this user
   const { data: hodCheck } = await supabase
     .from("hods")
     .select("id")
@@ -50,37 +74,94 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   const adminProfile = profiles.find(p => p.role === "admin")
 
-  // Priority-based selection: HOD > Faculty > Student > Admin
+  // If user intended to access a specific role, use that if available
   let selectedProfile = profiles[0]
   let selectedRole: UserRole = "student"
 
   console.log("[LAYOUT] Role checks - HOD:", !!hodCheck, "Faculty:", !!facultyCheck, "Student:", !!studentCheck, "Admin:", !!adminProfile)
 
-  if (hodCheck) {
-    const hodProfile = profiles.find(p => p.role === "hod")
-    if (hodProfile) {
-      selectedProfile = hodProfile
-      selectedRole = "hod"
-      console.log("[LAYOUT] Selected role: HOD", { profileId: hodProfile.id })
+  if (intendedRole) {
+    // Try to use the intended role if user has access to it
+    if (intendedRole === "admin" && adminProfile) {
+      selectedProfile = adminProfile
+      selectedRole = "admin"
+      console.log("[LAYOUT] Selected role: ADMIN (from URL)")
+    } else if (intendedRole === "hod" && hodCheck) {
+      const hodProfile = profiles.find(p => p.role === "hod")
+      if (hodProfile) {
+        selectedProfile = hodProfile
+        selectedRole = "hod"
+        console.log("[LAYOUT] Selected role: HOD (from URL)")
+      }
+    } else if (intendedRole === "faculty" && facultyCheck) {
+      const facultyProfile = profiles.find(p => p.role === "faculty")
+      if (facultyProfile) {
+        selectedProfile = facultyProfile
+        selectedRole = "faculty"
+        console.log("[LAYOUT] Selected role: FACULTY (from URL)")
+      }
+    } else if (intendedRole === "student" && studentCheck) {
+      const studentProfile = profiles.find(p => p.role === "student")
+      if (studentProfile) {
+        selectedProfile = studentProfile
+        selectedRole = "student"
+        console.log("[LAYOUT] Selected role: STUDENT (from URL)")
+      }
+    } else {
+      // User doesn't have access to intended role, fall back to priority
+      console.log("[LAYOUT] User doesn't have access to intended role, using priority fallback")
+      // Use default priority if intended role is not available
+      if (hodCheck) {
+        const hodProfile = profiles.find(p => p.role === "hod")
+        if (hodProfile) {
+          selectedProfile = hodProfile
+          selectedRole = "hod"
+        }
+      } else if (facultyCheck) {
+        const facultyProfile = profiles.find(p => p.role === "faculty")
+        if (facultyProfile) {
+          selectedProfile = facultyProfile
+          selectedRole = "faculty"
+        }
+      } else if (studentCheck) {
+        const studentProfile = profiles.find(p => p.role === "student")
+        if (studentProfile) {
+          selectedProfile = studentProfile
+          selectedRole = "student"
+        }
+      } else if (adminProfile) {
+        selectedProfile = adminProfile
+        selectedRole = "admin"
+      }
     }
-  } else if (facultyCheck) {
-    const facultyProfile = profiles.find(p => p.role === "faculty")
-    if (facultyProfile) {
-      selectedProfile = facultyProfile
-      selectedRole = "faculty"
-      console.log("[LAYOUT] Selected role: FACULTY", { profileId: facultyProfile.id })
+  } else {
+    // If no URL-based role detected, use priority: HOD > Faculty > Student > Admin
+    if (hodCheck) {
+      const hodProfile = profiles.find(p => p.role === "hod")
+      if (hodProfile) {
+        selectedProfile = hodProfile
+        selectedRole = "hod"
+        console.log("[LAYOUT] Selected role: HOD (default priority)")
+      }
+    } else if (facultyCheck) {
+      const facultyProfile = profiles.find(p => p.role === "faculty")
+      if (facultyProfile) {
+        selectedProfile = facultyProfile
+        selectedRole = "faculty"
+        console.log("[LAYOUT] Selected role: FACULTY (default priority)")
+      }
+    } else if (studentCheck) {
+      const studentProfile = profiles.find(p => p.role === "student")
+      if (studentProfile) {
+        selectedProfile = studentProfile
+        selectedRole = "student"
+        console.log("[LAYOUT] Selected role: STUDENT (default priority)")
+      }
+    } else if (adminProfile) {
+      selectedProfile = adminProfile
+      selectedRole = "admin"
+      console.log("[LAYOUT] Selected role: ADMIN (default priority)")
     }
-  } else if (studentCheck) {
-    const studentProfile = profiles.find(p => p.role === "student")
-    if (studentProfile) {
-      selectedProfile = studentProfile
-      selectedRole = "student"
-      console.log("[LAYOUT] Selected role: STUDENT", { profileId: studentProfile.id })
-    }
-  } else if (adminProfile) {
-    selectedProfile = adminProfile
-    selectedRole = "admin"
-    console.log("[LAYOUT] Selected role: ADMIN", { profileId: adminProfile.id })
   }
 
   // Get role-specific name if available

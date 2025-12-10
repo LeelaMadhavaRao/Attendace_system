@@ -65,62 +65,6 @@ export async function sendWhatsAppMessage(
   }
 }
 
-export async function sendWhatsAppTemplate(
-  { to, templateName, languageCode = "en", parameters }: {
-    to: string
-    templateName: string
-    languageCode?: string
-    parameters: Array<{ type: string; text: string }>
-  },
-  accessToken: string,
-  phoneNumberId: string,
-) {
-  try {
-    const url = `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`
-    
-    const body = {
-      messaging_product: "whatsapp",
-      to: to,
-      type: "template",
-      template: {
-        name: templateName,
-        language: {
-          code: languageCode
-        },
-        components: [
-          {
-            type: "body",
-            parameters: parameters
-          }
-        ]
-      }
-    }
-    
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    })
-
-    const responseText = await response.text()
-
-    if (!response.ok) {
-      const error = JSON.parse(responseText)
-      console.error("❌ WhatsApp Template API error:", error)
-      throw new Error(`WhatsApp Template API error: ${JSON.stringify(error)}`)
-    }
-
-    console.log("✅ Template message sent:", templateName)
-    return JSON.parse(responseText)
-  } catch (error) {
-    console.error("❌ Error sending WhatsApp template:", error)
-    throw error
-  }
-}
-
 export async function downloadWhatsAppMedia(mediaId: string, accessToken: string): Promise<ArrayBuffer> {
   try {
     // Get media URL
@@ -273,34 +217,19 @@ Response format (ALWAYS valid JSON):
    
    Format: Set "csv" or "excel" if user says "send file", "download", "export"
 
-7. "parentMessage" - Send notifications to parents
-   Use when: "send message to parents", "notify parents", "message parents below X%"
-   data: {"className": string or null, "percentage": number, "message": "optional", "allClasses": boolean}
-   
-   IMPORTANT - Class Selection Logic:
-   - If user says "all classes", "all my classes", "every class" → allClasses: true, className: null
-   - If user mentions specific class name → allClasses: false, className: "class name"
-   - Default percentage is 75 if not specified
-   
-   Examples:
-   ✅ "send message to parents of 75% below" → allClasses: true, className: null, percentage: 75
-   ✅ "notify parents below 80% in all classes" → allClasses: true, className: null, percentage: 80
-   ✅ "send message to parents of 75% below in 3/4CSIT" → allClasses: false, className: "3/4CSIT", percentage: 75
-   ✅ "message parents of students below 70% in CSE-A" → allClasses: false, className: "CSE-A", percentage: 70
-
-8. "addStudent" - Add single student
+7. "addStudent" - Add single student
    data: {"className": "string", "registerNumber": "string", "name": "string", "whatsappNumber": "optional", "parentWhatsappNumber": "optional"}
 
-9. "help" - Show commands
+8. "help" - Show commands
    data: {}
 
-10. "askClassName" - Request class name
-    data: {"pendingAction": "createClass"}
+9. "askClassName" - Request class name
+   data: {"pendingAction": "createClass"}
 
-11. "askStudentData" - Waiting for Excel after class creation
+10. "askStudentData" - Waiting for Excel after class creation
     data: {"classId": "string", "className": "string"}
 
-12. "clarify" - Need more info
+11. "clarify" - Need more info
     data: {"question": "specific question"}
 
 🔧 PARSING:

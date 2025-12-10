@@ -6,8 +6,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Progress } from "@/components/ui/progress"
-import { AddStudentDialog } from "@/components/add-student-dialog"
-import { UploadStudentsDialog } from "@/components/upload-students-dialog"
 import { Users, BookOpen, TrendingUp, AlertTriangle, Phone } from "lucide-react"
 
 interface PageProps {
@@ -118,13 +116,8 @@ export default async function FacultyClassDetailPage({ params }: PageProps) {
               <div>
                 <h2 className="text-xl font-semibold">{classData.name}</h2>
                 <div className="flex items-center gap-2 mt-1">
-                  {classData.semester && <Badge variant="secondary">Semester {classData.semester}</Badge>}
-                  {classData.academic_year && <Badge variant="outline">{classData.academic_year}</Badge>}
+                  {classData.department && <Badge variant="secondary">{classData.department}</Badge>}
                 </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <AddStudentDialog classId={id} />
-                <UploadStudentsDialog classId={id} />
               </div>
             </div>
           </CardContent>

@@ -26,8 +26,6 @@ export function CreateClassDialog() {
   const [isLoading, setIsLoading] = useState(false)
   const [formData, setFormData] = useState({
     name: "",
-    semester: "",
-    academicYear: "",
   })
   const router = useRouter()
 
@@ -43,7 +41,7 @@ export function CreateClassDialog() {
       } else {
         toast.success("Class created successfully")
         setOpen(false)
-        setFormData({ name: "", semester: "", academicYear: "" })
+        setFormData({ name: "" })
         router.refresh()
       }
     } catch {
@@ -64,7 +62,7 @@ export function CreateClassDialog() {
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
           <DialogTitle>Create New Class</DialogTitle>
-          <DialogDescription>Add a new class to manage attendance</DialogDescription>
+          <DialogDescription>Add a new class to manage attendance. Department will be assigned automatically.</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid gap-4">
@@ -76,33 +74,6 @@ export function CreateClassDialog() {
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 required
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="semester">Semester</Label>
-              <Select
-                value={formData.semester}
-                onValueChange={(value) => setFormData({ ...formData, semester: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select semester" />
-                </SelectTrigger>
-                <SelectContent>
-                  {[1, 2, 3, 4, 5, 6, 7, 8].map((sem) => (
-                    <SelectItem key={sem} value={sem.toString()}>
-                      Semester {sem}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="academic-year">Academic Year</Label>
-              <Input
-                id="academic-year"
-                placeholder="e.g., 2024-2025"
-                value={formData.academicYear}
-                onChange={(e) => setFormData({ ...formData, academicYear: e.target.value })}
               />
             </div>
           </div>

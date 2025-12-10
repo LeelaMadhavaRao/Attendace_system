@@ -3,9 +3,8 @@ import { createClient } from "@/lib/server"
 import { createAdminClient } from "@/lib/supabase-admin"
 import { Header } from "@/components/header"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { CreateClassDialog } from "@/components/create-class-dialog"
 import { Badge } from "@/components/ui/badge"
-import { BookOpen, Users, ClipboardList, Calendar } from "lucide-react"
+import { BookOpen, Users, ClipboardList } from "lucide-react"
 import Link from "next/link"
 
 export default async function FacultyClassesPage() {
@@ -91,7 +90,6 @@ export default async function FacultyClassesPage() {
                 <CardDescription>Manage your classes and students</CardDescription>
               </div>
             </div>
-            <CreateClassDialog />
           </CardHeader>
           <CardContent>
             {classesWithCounts.length === 0 ? (
@@ -112,7 +110,7 @@ export default async function FacultyClassesPage() {
                   >
                     <div className="flex items-start justify-between mb-3">
                       <h3 className="font-semibold">{cls.name}</h3>
-                      {cls.semester && <Badge variant="secondary">Sem {cls.semester}</Badge>}
+                      {cls.department && <Badge variant="secondary">{cls.department}</Badge>}
                     </div>
                     <div className="space-y-2 text-sm text-muted-foreground">
                       <div className="flex items-center gap-2">
@@ -123,12 +121,6 @@ export default async function FacultyClassesPage() {
                         <ClipboardList className="h-4 w-4" />
                         <span>{cls.sessionCount} sessions</span>
                       </div>
-                      {cls.academic_year && (
-                        <div className="flex items-center gap-2">
-                          <Calendar className="h-4 w-4" />
-                          <span>{cls.academic_year}</span>
-                        </div>
-                      )}
                     </div>
                   </Link>
                 ))}

@@ -621,3 +621,166 @@ export async function getFaculty(hodId?: string) {
 
   return { data: facultyWithProfiles, error: null }
 }
+
+/**
+ * Create auth accounts for existing students
+ * Generates username as [RegisterNumber-ClassName] and password as [RegisterNumber]
+ */
+export async function createStudentAuthAccounts(classId?: string) {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return { error: "Unauthorized" }
+  }
+
+  const adminClient = createAdminClient()
+
+  // Get students (optionally filtered by class)
+  let query = adminClient
+    .from("students")
+    .select(`
+      id,
+      register_number,
+      name,
+      class_id,
+      classes (
+        id,
+        name
+      )
+    `)
+
+  if (classId) {
+    query = query.eq("class_id", classId)
+  }
+
+  const { data: students, error: studentsError } = await query
+
+  if (studentsError) {
+    return { error: studentsError.message }
+  }
+
+  if (!students || students.length === 0) {
+    return { error: "No students found" }
+  }
+
+  const results: Array<{
+    studentName: string
+    registerNumber: string
+    username: string
+    password: string
+    status: "success" | "failed" | "skipped"
+    error?: string
+  }> = []
+
+  for (const student of students) {
+    const className = (student.classes as any)?.name || "unknown"
+    const username = `${student.register_number}-${className}`
+    const password = student.register_number
+    const sanitizedEmailPrefix = username.toLowerCase().replace(/[^a-z0-9-]/g, "")
+    const email = `${sanitizedEmailPrefix}@student.local`
+
+    try {
+      // Check if account already exists
+      const { data: existingProfile } = await adminClient
+        .from("profiles")
+        .select("id")
+        .eq("email", email)
+        .single()
+
+      if (existingProfile) {
+        results.push({
+          studentName: student.name,
+          registerNumber: student.register_number,
+          username,
+          password,
+          status: "skipped",
+          error: "Account already exists",
+        })
+        continue
+      }
+
+      // Create auth account
+      const { data: authData, error: authError } = await adminClient.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: {
+          name: student.name,
+          role: "student",
+          register_number: student.register_number,
+          class_id: student.class_id,
+          username,
+        },
+      })
+
+      if (authError) {
+        results.push({
+          studentName: student.name,
+          registerNumber: student.register_number,
+          username,
+          password,
+          status: "failed",
+          error: authError.message,
+        })
+        continue
+      }
+
+      // Create profile
+      const { error: profileError } = await adminClient.from("profiles").insert({
+        id: authData.user.id,
+        email: authData.user.email,
+        name: student.name,
+        role: "student",
+      })
+
+      if (profileError) {
+        results.push({
+          studentName: student.name,
+          registerNumber: student.register_number,
+          username,
+          password,
+          status: "failed",
+          error: `Profile creation failed: ${profileError.message}`,
+        })
+        continue
+      }
+
+      results.push({
+        studentName: student.name,
+        registerNumber: student.register_number,
+        username,
+        password,
+        status: "success",
+      })
+
+      console.log(`[CREATE_STUDENT_AUTH] Success - Username: ${username}, Password: ${password}`)
+    } catch (err: any) {
+      results.push({
+        studentName: student.name,
+        registerNumber: student.register_number,
+        username,
+        password,
+        status: "failed",
+        error: err?.message || "Unknown error",
+      })
+    }
+  }
+
+  const successCount = results.filter((r) => r.status === "success").length
+  const failedCount = results.filter((r) => r.status === "failed").length
+  const skippedCount = results.filter((r) => r.status === "skipped").length
+
+  return {
+    success: true,
+    results,
+    summary: {
+      total: students.length,
+      success: successCount,
+      failed: failedCount,
+      skipped: skippedCount,
+    },
+  }
+}

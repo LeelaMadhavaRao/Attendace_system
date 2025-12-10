@@ -120,7 +120,11 @@ export function UsersTable({ users, type }: UsersTableProps) {
                   </TableCell>
                 )}
                 <TableCell className="text-muted-foreground">
-                  {new Date(user.created_at).toLocaleDateString()}
+                  {new Date(user.created_at).toLocaleDateString("en-US", {
+                    year: "numeric",
+                    month: "2-digit",
+                    day: "2-digit",
+                  })}
                 </TableCell>
                 <TableCell>
                   <DropdownMenu>
@@ -131,7 +135,7 @@ export function UsersTable({ users, type }: UsersTableProps) {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => router.push(type === "hod" ? `/admin/hods/${user.id}` : `/hod/faculty/${user.id}`)}>
                         <Eye className="mr-2 h-4 w-4" />
                         View Details
                       </DropdownMenuItem>

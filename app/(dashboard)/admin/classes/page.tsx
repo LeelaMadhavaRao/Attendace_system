@@ -41,19 +41,32 @@ export default async function AdminClassesPage() {
 
   const adminClient = createAdminClient()
 
-  // Fetch all classes with faculty info
-  const { data: classes } = await adminClient
+  // Fetch all classes
+  const { data: classes, error: classesError } = await adminClient
     .from("classes")
-    .select(
-      `
-      *,
-      faculty:faculty(
-        profile:profiles(name),
-        department
-      )
-    `,
-    )
+    .select("*")
     .order("created_at", { ascending: false })
+
+  console.log("[ADMIN/CLASSES] Classes fetched:", classes?.length || 0, "Error:", classesError?.message)
+
+  // Fetch all faculty with profiles for lookup
+  const { data: allFaculty } = await adminClient
+    .from("faculty")
+    .select("id, department, profile_id")
+  
+  // Fetch profiles for faculty
+  const facultyProfileIds = (allFaculty || []).map(f => f.profile_id).filter(Boolean)
+  const { data: facultyProfiles } = await adminClient
+    .from("profiles")
+    .select("id, name")
+    .in("id", facultyProfileIds.length > 0 ? facultyProfileIds : ["none"])
+
+  // Create lookup maps
+  const profileMap = new Map((facultyProfiles || []).map(p => [p.id, p]))
+  const facultyMap = new Map((allFaculty || []).map(f => [f.id, {
+    ...f,
+    profile: profileMap.get(f.profile_id)
+  }]))
 
   // Get student counts for each class
   const classesWithCounts = await Promise.all(
@@ -68,10 +81,14 @@ export default async function AdminClassesPage() {
         .select("*", { count: "exact", head: true })
         .eq("class_id", cls.id)
 
+      const faculty = facultyMap.get(cls.faculty_id)
+
       return {
         ...cls,
         studentCount: count || 0,
         sessionCount: sessionCount || 0,
+        facultyName: faculty?.profile?.name || "-",
+        department: faculty?.department || "-",
       }
     }),
   )
@@ -115,9 +132,9 @@ export default async function AdminClassesPage() {
                     {classesWithCounts.map((cls) => (
                       <TableRow key={cls.id}>
                         <TableCell className="font-medium">{cls.name}</TableCell>
-                        <TableCell>{cls.faculty?.profile?.name || "-"}</TableCell>
+                        <TableCell>{cls.facultyName}</TableCell>
                         <TableCell>
-                          <Badge variant="secondary">{cls.faculty?.department || "-"}</Badge>
+                          <Badge variant="secondary">{cls.department}</Badge>
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
@@ -132,7 +149,11 @@ export default async function AdminClassesPage() {
                           </div>
                         </TableCell>
                         <TableCell className="text-muted-foreground">
-                          {new Date(cls.created_at).toLocaleDateString()}
+                          {new Date(cls.created_at).toLocaleDateString("en-US", {
+                            year: "numeric",
+                            month: "2-digit",
+                            day: "2-digit",
+                          })}
                         </TableCell>
                         <TableCell>
                           <Link

@@ -5,6 +5,7 @@ import type React from "react"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/client"
+import { verifyStudentLogin } from "@/lib/student-auth"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -18,11 +19,14 @@ import Link from "next/link"
 
 export function LoginForm() {
   const [email, setEmail] = useState("")
+  const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [selectedRole, setSelectedRole] = useState<UserRole>("faculty")
   const [isLoading, setIsLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const router = useRouter()
+
+  const isStudentRole = selectedRole === "student"
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -31,6 +35,74 @@ export function LoginForm() {
     try {
       const supabase = createClient()
 
+      // For student role, use server action to verify credentials
+      if (isStudentRole) {
+        console.log("[LOGIN] Student login attempt with username:", username)
+
+        // Call server action to verify student login
+        const result = await verifyStudentLogin(username, password)
+
+        if (!result.success) {
+          toast.error(result.error || "Login failed")
+          setIsLoading(false)
+          return
+        }
+
+        // Login successful - store student info in localStorage, sessionStorage, and cookies
+        const student = result.student!
+        const authData = {
+          userRole: "student",
+          studentName: student.name,
+          registerNumber: student.register_number,
+          studentUsername: username,
+          studentId: student.id,
+          classId: student.class_id,
+          className: student.class_name,
+        }
+
+        // Store in localStorage for persistence across sessions
+        Object.entries(authData).forEach(([key, value]) => {
+          localStorage.setItem(key, value)
+        })
+
+        // Store in sessionStorage for current session
+        Object.entries(authData).forEach(([key, value]) => {
+          sessionStorage.setItem(key, value)
+        })
+
+        // Store in cookie for server-side access (10-day expiration)
+        const expirationDate = new Date()
+        expirationDate.setTime(expirationDate.getTime() + 10 * 24 * 60 * 60 * 1000)
+        document.cookie = `studentAuth=${JSON.stringify(authData)}; expires=${expirationDate.toUTCString()}; path=/; SameSite=Strict`
+
+        console.log("[LOGIN] Student logged in successfully:", {
+          name: student.name,
+          registerNumber: student.register_number,
+          className: student.class_name,
+          username,
+        })
+        
+        // Verify localStorage was set
+        console.log("[LOGIN] Verifying localStorage:", {
+          userRole: localStorage.getItem("userRole"),
+          studentName: localStorage.getItem("studentName"),
+          registerNumber: localStorage.getItem("registerNumber"),
+        })
+
+        toast.success(`Welcome ${student.name}!`)
+        
+        // Navigate to student dashboard with auth data as query params
+        const params = new URLSearchParams()
+        params.set("authenticated", "true")
+        params.set("name", student.name)
+        params.set("register", student.register_number)
+        params.set("class", student.class_name)
+        
+        router.replace(`/student?${params.toString()}`)
+        return
+      }
+
+      // For non-student roles, use email and password
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -165,45 +237,97 @@ export function LoginForm() {
           </div>
 
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="Enter your email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                disabled={isLoading}
-                className="h-11"
-                suppressHydrationWarning
-              />
-            </div>
+            {isStudentRole ? (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="username">Username</Label>
+                  <Input
+                    id="username"
+                    type="text"
+                    placeholder="e.g., 23B91A0738-3/4CSIT"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    required
+                    disabled={isLoading}
+                    className="h-11"
+                    suppressHydrationWarning
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Format: RegisterNumber-ClassName
+                  </p>
+                </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  placeholder="Enter your password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  disabled={isLoading}
-                  className="h-11 pr-10"
-                  suppressHydrationWarning
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  suppressHydrationWarning
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
+                <div className="space-y-2">
+                  <Label htmlFor="student-password">Password</Label>
+                  <div className="relative">
+                    <Input
+                      id="student-password"
+                      type={showPassword ? "text" : "password"}
+                      placeholder="Enter your password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                      disabled={isLoading}
+                      className="h-11 pr-10"
+                      suppressHydrationWarning
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      suppressHydrationWarning
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Default password is your register number
+                  </p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="Enter your email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    disabled={isLoading}
+                    className="h-11"
+                    suppressHydrationWarning
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="password">Password</Label>
+                  <div className="relative">
+                    <Input
+                      id="password"
+                      type={showPassword ? "text" : "password"}
+                      placeholder="Enter your password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                      disabled={isLoading}
+                      className="h-11 pr-10"
+                      suppressHydrationWarning
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      suppressHydrationWarning
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
 
           <Button type="submit" className="w-full h-11 text-base font-medium" disabled={isLoading}>

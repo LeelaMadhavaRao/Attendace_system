@@ -133,7 +133,11 @@ export default async function FacultyAttendancePage() {
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <Calendar className="h-4 w-4 text-muted-foreground" />
-                              {new Date(session.date).toLocaleDateString()}
+                              {new Date(session.date).toLocaleDateString("en-US", {
+                                year: "numeric",
+                                month: "2-digit",
+                                day: "2-digit",
+                              })}
                             </div>
                           </TableCell>
                           <TableCell>
